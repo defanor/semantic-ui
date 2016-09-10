@@ -24,7 +24,10 @@ some events to a program).
 Currently it depends, among other things, on a
 [hs-sdl2-image fork](https://github.com/defanor/hs-sdl2-image), and
 can be executed simply by piping `feed` output into `view` input:
-`feed | view | xargs -L 1 xdg-open`.
+
+```
+feed http://xkcd.com/atom.xml https://feeds.feedburner.com/InvisibleBread | view | xargs -L 1 xdg-open
+```
 
 The current document structure:
 
@@ -39,4 +42,4 @@ data Block = BParagraph [Inline]
 
 And how it looks like:
 
-![xkcd feed in the viewer](http://paste.uberspace.net/feed-reader.png)
+![feeds in the viewer](http://paste.uberspace.net/feed-reader.png)

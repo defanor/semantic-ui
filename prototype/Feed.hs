@@ -1,40 +1,45 @@
-import Types
-import Text.Feed.Types
+import Text.Feed.Types as FT
 import Text.Feed.Import
 import Text.Atom.Feed as TAF
-import Network.Download
+import Text.Feed.Query
+import Text.RSS.Syntax as RS
+import qualified Data.ByteString.Lazy.Char8 as L8
 import Text.HTML.TagSoup
-
 import Data.Maybe
-import qualified Data.ByteString as B
+import System.Environment
+
+import Network.HTTP.Simple
+import Network.HTTP.Client
+
+import Types
+
 
 main :: IO ()
-main = do
-  r <- openURIString "http://xkcd.com/atom.xml"
-  d <- case r of
-    Right b -> case parseFeedString b of
-      Just (AtomFeed f) -> makeDoc f
-      _ -> pure $ err "Failed to parse the feed"
-    Left e -> pure $ err $ "Failed to retrieve the feed: " ++ e
-  putStrLn $ show d
-  where
-    err x = (BSection "Feed reader"
-           [BParagraph [IText x]])
+main = getArgs >>= mapM getFeed >>= putStrLn . show . BSection "Feeds"
+
+getFeed :: String -> IO Block
+getFeed uri = do
+  r <- httpLBS =<< parseRequest uri
+  case parseFeedString (L8.unpack $ responseBody r) of
+    Just f -> BSection (getFeedTitle f) <$> mapM parseItem (getFeedItems f)
+    Nothing -> pure $ BSection "error" [BParagraph [IText "Failed to parse", ILink uri uri]]
+
+parseItem :: Item -> IO Block
+parseItem (AtomItem e) = do
+  summary <- maybe (pure []) extractBlocks $ entrySummary e
+  pure $ BSection (showTC $ entryTitle e) $ concat
+    [[BParagraph [IText $ "Updated: " ++ entryUpdated e]],
+     summary,
+     [BParagraph (IText "URIs:" : map makeURI (entryLinks e))]]
+parseItem (FT.RSSItem i) = BSection (maybe "No title" id (rssItemTitle i)) <$> do
+  descr <- maybe (pure []) (extractBlocks' . parseTags) $ rssItemDescription i
+  pure descr
+parseItem x = undefined
+
 
 showTC :: TextContent -> String
 showTC (TextString s) = s
 showTC other = show other
-
-makeDoc :: TAF.Feed -> IO Block
-makeDoc f = BSection (showTC $ feedTitle f) . concat <$> mapM makeSection (feedEntries f)
-
-makeSection :: TAF.Entry -> IO [Block]
-makeSection e = case entrySummary e of
-  Nothing -> pure []
-  Just s -> do
-    summary <- extractBlocks s
-    pure $ [BSection (showTC $ entryTitle e) $ summary ++
-            [BSection "URIs" [BParagraph $ map makeURI (entryLinks e)]]]
 
 makeURI :: Link -> Inline
 makeURI l = ILink (maybe (linkHref l) id (linkTitle l)) (linkHref l)
@@ -46,19 +51,19 @@ extractBlocks (HTMLString s) = extractBlocks' $ parseTags s
 extractBlocks other = pure [BParagraph [IText $ showTC other]]
 
 extractBlocks' :: [Tag String] -> IO [Block]
+extractBlocks' [] = pure []
 extractBlocks' (TagOpen "img" img : xs) =
   case lookup "src" img of
     Nothing -> pure []
     Just uri -> do
-      r <- openURI uri
-      case r of
-        Right b -> do
-          let fn = "/tmp/" ++ (map fileName $ fromJust $ lookup "src" img)
-          B.writeFile fn b
-          let picture = Just $ BImage fn
-          let alt = lookup "alt" img >>= \a -> pure (BParagraph [IText a])
-          pure $ catMaybes [picture, alt]
-        _ -> pure []
+      r <- httpLBS =<< parseRequest uri
+      let fn = "/tmp/" ++ (map fileName $ fromJust $ lookup "src" img)
+          picture = Just $ BImage fn
+          alt = lookup "alt" img >>= \a -> pure (BParagraph [IText a])
+      L8.writeFile fn $ responseBody r
+      rest <- extractBlocks' xs
+      pure $ catMaybes [picture, alt] ++ rest
   where fileName '/' = '_'
         fileName x = x
-extractBlocks' _ = pure []
+extractBlocks' (TagText txt : xs) = (BParagraph [IText txt] :) <$> extractBlocks' xs
+extractBlocks' (_:xs) = extractBlocks' xs

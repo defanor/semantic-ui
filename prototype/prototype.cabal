@@ -18,7 +18,7 @@ cabal-version:       >=1.10
 executable view
   main-is:             View.hs
   other-modules:       Types
-  -- other-extensions:    
+  -- other-extensions:
   build-depends:       base >=4.8 && <4.9
                      , linear
                      , mtl >= 2.2.1
@@ -27,22 +27,22 @@ executable view
                      , sdl2-ttf
                      , text
                      , transformers >= 0.4.2.0
-  -- hs-source-dirs:      
+  -- hs-source-dirs:
   default-language:    Haskell2010
   extra-lib-dirs:      /usr/local/lib/
   -- pkgconfig-depends:   SDL2-ttf
   extra-libraries:   SDL2_image
 
-
 executable feed
   main-is:             Feed.hs
   other-modules:       Types
-  -- other-extensions:    
+  -- other-extensions:
   build-depends:       base >=4.8 && <4.9
                      , bytestring >= 0.10.6.0
                      , feed >= 0.3 && < 0.4
+                     , http-client >= 0.5.1
+                     , http-conduit
                      , mtl >= 2.2.1
                      , tagsoup >= 0.14 && < 0.15
-                     , download
-  -- hs-source-dirs:      
+  -- hs-source-dirs:
   default-language:    Haskell2010
