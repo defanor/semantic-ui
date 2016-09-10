@@ -40,6 +40,7 @@ data RenderState = RenderState { rPath :: [Int]
 
 data RenderCache = RenderCache { rcSurfaceDim :: V2 CInt
                                , rcTexture :: (Texture, Texture)
+                               -- ^ background and foreground textures
                                , rcElements :: [Element]
                                }
 
@@ -48,6 +49,7 @@ fpath = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
 sectionPaddingLeft = 20
 titleFontSize = 20
 fontSize = 16
+paddingBottom = 5
 
 
 main :: IO ()
@@ -86,12 +88,12 @@ appLoop doc rcache' selection' yOffset' renderer = do
       (Just rc, True) -> render (Just rc)
       (Just rc, _) -> pure rc
       _ -> render Nothing
-  -- show
+
   when (any redrawNeeded epls
         || any rerenderNeeded epls
         || yOffset /= yOffset'
         || selection /= selection') $ do
-    rendererDrawColor renderer $= V4 0x10 0x10 0x10 0
+    rendererDrawColor renderer $= V4 0x06 0x10 0x14 0
     clear renderer
     let (V2 w h) = rcSurfaceDim rcache
     copy renderer (fst $ rcTexture rcache) Nothing
@@ -308,7 +310,7 @@ makeTexture renderer active w es = do
             when (active == p) $ surfaceFillRects
               bgSurf
               (fromList $ map (fmap fromIntegral . fst) rs)
-              (V4 0x0 0x0 0x0 0xFF))
+              (V4 0x00 0x00 0x00 0xFF))
     es
   bgTexture <- createTextureFromSurface renderer bgSurf
   freeSurface bgSurf
@@ -339,11 +341,11 @@ renderDoc renderer active redraw w b rcache = undefined -- should not happen
 
 renderBlock :: Block -> [Int] -> StateT RenderState IO ()
 renderBlock (BSection title blocks) path = do
-  titleSurf <- textSurface title titleFontSize fpath $ clr 0xb0 0x80 0x80 0
+  titleSurf <- textSurface title titleFontSize fpath $ clr 0xA0 0xD0 0xB0 0
   titleSurfDim@(V2 tw th) <- surfaceDimensions titleSurf
   rs <- S.get
   put $ rs { rX = rX rs + sectionPaddingLeft,
-             rY = rY rs + fromIntegral th,
+             rY = rY rs + fromIntegral th + paddingBottom,
              rW = rW rs - sectionPaddingLeft }
   zipWithM renderBlock blocks (map ((++) path . pure) [0..])
   rs' <- S.get
@@ -361,7 +363,7 @@ renderBlock (BImage imgPath) path = do
   s <- imgLoad imgPath
   (V2 iw ih) <- surfaceDimensions s
   rs <- S.get
-  put $ rs { rY = rY rs + fromIntegral ih,
+  put $ rs { rY = rY rs + fromIntegral ih + paddingBottom,
              rElements = (path, [(rect (rX rs) (rY rs) iw ih, s)]) : rElements rs }
 renderBlock (BParagraph inlines) path = do
   rs <- S.get
@@ -369,12 +371,12 @@ renderBlock (BParagraph inlines) path = do
   rs' <- S.get
   put $ rs' { rX = rX rs,
               rW = rW rs,
-              rY = bottom (rElements rs'),
+              rY = bottom (rElements rs') + paddingBottom,
               rElements = (path, []) : rElements rs'}
 
 renderInline :: Int -> Inline -> [Int] -> StateT RenderState IO ()
-renderInline origX (IText txt) = renderInline' origX txt (clr 0x80 0x80 0x80 0)
-renderInline origX (ILink txt _) = renderInline' origX txt (clr 0x80 0x80 0xa0 0)
+renderInline origX (IText txt) = renderInline' origX txt (clr 0xC0 0xC0 0xC0 0)
+renderInline origX (ILink txt _) = renderInline' origX txt (clr 0x80 0xC0 0xB0 0)
 
 renderInline' :: Int -> String -> Raw.Color -> [Int] -> StateT RenderState IO ()
 renderInline' origX txt c path = do
