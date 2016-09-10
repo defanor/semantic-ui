@@ -9,8 +9,3 @@ data Block = BParagraph [Inline]
            | BSection String [Block]
            deriving (Show, Eq, Read)
 
-data BlockState a = BSFew a [a]
-                  | BSOne a
-                  | BSRec a [BlockState a]
-                  deriving (Show, Eq)
-

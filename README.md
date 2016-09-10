@@ -18,18 +18,15 @@ into a structure, and `view`, which reads that structure, and renders
 it using SDL. The viewer is designed to resemble an
 [info](https://en.wikipedia.org/wiki/Info_%28Unix%29) reader, but with
 graphics, and aiming to be more interactive (i.e., rendering not
-static documents, but a basic and changing program UI, and returning
+static documents, but a basic and changing program UI, and passing
 some events to a program).
 
 Currently it depends, among other things, on a
 [hs-sdl2-image fork](https://github.com/defanor/hs-sdl2-image), and
 can be executed simply by piping `feed` output into `view` input:
-`feed | view`.
+`feed | view | xargs -L 1 xdg-open`.
 
-The prototype code is pretty bad, and there's a lot to optimize/cache;
-maybe I'll just rewrite it in C and with all the caching later, once
-will figure the appropriate architecture. The current document
-structure, btw:
+The current document structure:
 
 ```haskell
 data Inline = IText String

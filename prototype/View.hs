@@ -8,7 +8,7 @@ import Control.Monad (unless)
 import SDL.TTF as TTF
 import SDL.TTF.FFI (TTFFont)
 import Data.Maybe
-import Data.List
+import Data.List as L
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Char
@@ -19,8 +19,24 @@ import Data.Traversable
 import Data.Either
 import Data.Word
 
+import Control.Monad.State as S
+import Linear.V2
+import Foreign.C.Types
+import GHC.Exts
+import Control.Applicative
+import System.IO
+
 import Types
-import BlockState
+
+
+type Element = ([Int], [(Rectangle Int, Surface)])
+
+data RenderState = RenderState { rPath :: [Int]
+                               , rX :: Int
+                               , rY :: Int
+                               , rW :: Int
+                               , rElements :: [Element]
+                               }
 
 
 fpath = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
@@ -32,13 +48,188 @@ fontSize = 16
 main :: IO ()
 main = do
   block <- readLn
-  initializeAll
+  initialize [InitEvents, InitVideo]
   window <- createWindow "( ﾉ ﾟｰﾟ)ﾉ ☀" defaultWindow {windowResizable = True}
   renderer <- createRenderer window (-1) defaultRenderer
   TTF.init
-  appLoop block (makeState False block) 0 Nothing renderer
+  appLoop block Nothing [] [] 0 renderer
   TTF.quit
 
+
+appLoop :: Block
+        -> Maybe Surface
+        -> [Element]
+        -> [Int]
+        -> Int
+        -> Renderer
+        -> IO ()
+appLoop doc surf' elements' selection' yOffset' renderer = do
+  event <- waitEvent
+  rvp <- SDL.get (rendererViewport renderer)
+
+  let epl = eventPayload event
+      (rw, rh) = maybe (200, 200) (\x -> (rectW x, rectH x)) rvp
+      (selection, yOffset) = navigate doc elements' selection' yOffset' epl
+
+  -- todo: add link selection there, update active element here
+  handleLinkActions doc elements' selection yOffset epl
+
+  (surf, elements) <-
+    let render = renderDoc selection elements' (rerenderNeeded epl) rw doc in
+      case (surf', selection /= selection' || rerenderNeeded epl) of
+        (Just s, True) -> freeSurface s >> render
+        (Just s, _) -> pure (s, elements')
+        _ -> render
+
+  -- show
+  when (redrawNeeded epl
+        || rerenderNeeded epl
+        || yOffset /= yOffset'
+        || selection /= selection') $ do
+    rendererDrawColor renderer $= V4 0x10 0x10 0x10 0
+    clear renderer
+    (V2 w h) <- surfaceDimensions surf
+    -- todo: it's unnecessary to do this on every scroll, optimize
+    texture <- createTextureFromSurface renderer surf
+    copy renderer texture Nothing
+      (Just (rect 0 yOffset w h))
+    destroyTexture texture
+    present renderer
+
+  unless (textInput epl == Just "q") $
+    appLoop doc (Just surf) elements selection yOffset renderer
+
+
+inRectangle :: (Integral a, Integral b) => Point V2 a -> Rectangle b -> Bool
+inRectangle (P (V2 x y)) r = and [ x >= rectX r
+                            , x <= rectX r + rectW r
+                            , y >= rectY r
+                            , y <= rectY r + rectH r]
+
+atPoint :: Integral a => Point V2 a -> [Element] -> [[Int]]
+atPoint p = map fst . filter (any (inRectangle p . fst) . snd)
+
+getElem :: Block -> [Int] -> Maybe (Either Block Inline)
+getElem x [] = Just $ Left x
+getElem (BParagraph f) [n] = if n < length f
+                             then Just $ Right $ f !! n
+                             else Nothing
+getElem (BSection _ bs) (p:ps) = if p < length bs
+                                 then getElem (bs !! p) ps
+                                 else Nothing
+getElem _ _ = Nothing
+
+getLink :: Block -> [Int] -> Maybe Inline
+getLink b p = case getElem b p of
+  Just (Right l@(ILink _ _)) -> Just l
+  _ -> Nothing
+
+getSection :: Block -> [Int] -> Maybe Block
+getSection b p = case getElem b p of
+  Just (Left s@(BSection _ _)) -> Just s
+  _ -> Nothing
+
+
+type Nav = (Block -> [Int] -> Maybe [Int])
+type Nav' = (Block -> [Int] -> [Int])
+
+tryNav :: Nav
+tryNav b p = getElem b p >> pure p
+
+sDown :: Nav
+sDown b p = tryNav b (p ++ [0])
+
+sUp :: Nav
+sUp b [] = Nothing
+sUp b p = Just $ L.init p
+
+sNext :: Nav
+sNext b [] = Nothing
+sNext b p = tryNav b $ L.init p ++ [last p + 1]
+
+sPrev :: Nav
+sPrev b [] = Nothing
+sPrev b p | last p > 0 = tryNav b $ L.init p ++ [last p - 1]
+          | otherwise = Nothing
+
+sLast :: Nav
+sLast b p = maybe (tryNav b p) (sLast b) (sNext b p)
+
+sFirst :: Nav
+sFirst b p = maybe (tryNav b p) (sFirst b) (sPrev b p)
+
+sPrevCycle :: Nav
+sPrevCycle b p = sPrev b p <|> sLast b p
+
+sNextCycle :: Nav
+sNextCycle b p = sNext b p <|> sFirst b p
+
+sDownNext :: Nav
+sDownNext b p = sDown b p <|> sNext b p
+
+sLastChild :: Nav
+sLastChild b p = sDown b p >>= sLast b
+
+sFirstChild :: Nav
+sFirstChild b p = sDown b p >>= sFirst b
+
+sVeryLastChild :: Nav
+sVeryLastChild b p = maybe (tryNav b p) (sVeryLastChild b) (sLastChild b p)
+
+sNextUp :: Nav
+sNextUp b p = sNext b p <|> (sUp b p >>= sNextUp b)
+
+-- | Info-style prev
+sPrevInfo :: Nav
+sPrevInfo b p = (sPrev b p >>= sVeryLastChild b)
+             <|> sUp b p
+             <|> sVeryLastChild b p
+
+-- | Info-style next
+sNextInfo :: Nav
+sNextInfo b p = sDown b p
+                <|> sNextUp b p
+                <|> pure []
+
+-- | Repeat a navigation action until we reach a section
+tillSection :: Nav -> Nav
+tillSection f b p = do
+  p' <- f b p
+  (getSection b p' >> pure p') <|> tillSection f b p'
+
+
+handleLinkActions :: Block -> [Element] -> [Int] -> Int -> EventPayload -> IO ()
+handleLinkActions b es s y
+  (MouseButtonEvent
+    (MouseButtonEventData _ Pressed _ ButtonLeft 1 (P (V2 cx cy)))) = do
+  case catMaybes $ map (getLink b) $ atPoint (P (V2 cx (cy - fromIntegral y))) es of
+    [ILink txt target] -> do
+      putStrLn target
+      hFlush stdout
+    _ -> pure ()
+handleLinkActions b es s y epl = pure ()
+
+
+-- todo: move selection on scroll
+navigate :: Block -> [Element] -> [Int] -> Int -> EventPayload -> ([Int], Int)
+navigate b es p y (MouseWheelEvent (MouseWheelEventData _ _ (V2 _ i))) =
+  (p, y + 50 * fromIntegral i)
+navigate b es p y epl = maybe (p, y) id $ do
+  ti <- textInput epl
+  navigateStruct ti <|> navigatePos ti
+  where
+    navigatePos :: Text.Text -> Maybe ([Int], Int)
+    navigatePos c = do
+      f <- lookup c [ ("f", (flip (-) 50)), ("b", (+ 50)) ]
+      pure (p, f y)
+    navigateStruct :: Text.Text -> Maybe ([Int], Int)
+    navigateStruct c = do
+      f <- lookup c [ ("n", sNextCycle), ("p", sPrevCycle)
+                    , ("u", sUp), ("d", sDown)
+                    , ("]", sNextInfo), ("[", sPrevInfo)]
+      p <- tillSection f b p
+      t <- top . map fst <$> lookup p es
+      pure (p, -t)
 
 redrawNeeded :: EventPayload -> Bool
 redrawNeeded (WindowShownEvent _) = True
@@ -50,108 +241,44 @@ redrawNeeded _ = False
 
 rerenderNeeded :: EventPayload -> Bool
 rerenderNeeded (WindowResizedEvent _) = True
-rerenderNeeded (KeyboardEvent _) = True
+rerenderNeeded (WindowShownEvent _) = True
 rerenderNeeded _ = False
 
-adjustOffset :: Int -> EventPayload -> Int
-adjustOffset cur (MouseWheelEvent (MouseWheelEventData _ _ (V2 _ o))) = cur + fromIntegral o * 50
-adjustOffset cur _ = cur
 
 textInput :: EventPayload -> Maybe Text.Text
 textInput (TextInputEvent tid) = Just $ textInputEventText tid
 textInput _ = Nothing
 
-appLoop :: Block
-        -> BlockState Bool
-        -> Int
-        -> Maybe (Surface, BlockState [Rectangle Int])
-        -> Renderer
-        -> IO ()
-appLoop doc bsb yOffset surf' renderer = do
-  event <- waitEvent
-  let epl = eventPayload event
-  rvp <- get (rendererViewport renderer)
-  let (rw, rh) = case rvp of
-        Just (Rectangle (P (V2 x y)) (V2 w' h')) -> (fromIntegral w', fromIntegral h')
-        _ -> (200, 200)
 
-  -- navigate
-  let (bsb', yOffset') = case surf' of
-        Just (surf, st) ->
-          let nav f =
-                let bsb' = f bsb
-                    yOffset' = case activeCoord bsb' st of
-                      Just [Rectangle (P (V2 _ y)) (V2 _ h)] ->
-                        if -yOffset >= y || -yOffset + rh <= y + h
-                        then -y
-                        else yOffset
-                      _ -> yOffset
-                in (bsb', yOffset')
-          in
-            case (epl, textInput epl) of
-              (_, Just "n") -> nav $ navigate 1
-              (_, Just "p") -> nav $ navigate (-1)
-              (_, Just "]") -> nav $ navigate' 1
-              (_, Just "[") -> nav $ navigate' (-1)
-              ((MouseWheelEvent (MouseWheelEventData _ _ (V2 _ i))), _) ->
-                (bsb, yOffset + 50 * fromIntegral i)
-              _ -> (bsb, yOffset)
-        _ -> (bsb, yOffset)
-
-  -- render
-  (surf, st) <- case (surf', rerenderNeeded epl) of
-                  (Just (s, bsc), False) -> pure (s, bsc)
-                  (Just (s, bsc), True) -> do
-                    freeSurface s
-                    renderBlock 0 0 rw doc bsb'
-                  (Nothing, _) -> renderBlock 0 0 rw doc bsb'
-
-  -- show
-  when (redrawNeeded epl) $ do
-    putStrLn $ show $ activeElem bsb' doc
-    rendererDrawColor renderer $= V4 0x10 0x10 0x10 0
-    clear renderer
-    
-    (V2 w h) <- surfaceDimensions surf
-    texture <- createTextureFromSurface renderer surf
-    copy renderer texture Nothing
-      (Just (rect 0 yOffset' w h))
-    destroyTexture texture
-    present renderer
-
-  unless (textInput epl == Just "q") $
-    appLoop doc bsb' yOffset' (Just (surf, st)) renderer
-
-
-
--- navigation
-
-
-
-getBlock :: [Int] -> Block -> Maybe (Either Block Inline)
-getBlock [] x = Just $ Left x
-getBlock [n] (BParagraph f) = if n < length f
-                              then Just $ Right $ f !! n
-                              else Nothing
-getBlock (p:ps) (BSection _ bs) = if p < length bs
-                                  then getBlock ps (bs !! p)
-                                  else Nothing
-getBlock _ _ = Nothing
-
-
-activeElem :: BlockState Bool -> Block -> Maybe (Either Block Inline)
-activeElem bsb b = case findBS (== True) bsb of
-  [path] -> getBlock path b
-  _ -> Nothing
-
-
-rect :: (Integral a, Integral b, Integral c, Integral d, Integral e) => a -> b -> c -> d -> Rectangle e
+rect :: (Integral a, Integral b, Integral c, Integral d, Integral e) =>
+        a -> b -> c -> d -> Rectangle e
 rect a b c d = Rectangle (P (V2 (fromIntegral a) (fromIntegral b)))
                (V2 (fromIntegral c) (fromIntegral d))
 
+rectX :: (Integral a, Integral b) => Rectangle a -> b
+rectX (Rectangle (P (V2 x _)) (V2 _ _)) = fromIntegral x
 
-textSuraface :: String -> Int -> String -> Raw.Color -> IO Surface
-textSuraface str size font clr = do
+rectY :: (Integral a, Integral b) => Rectangle a -> b
+rectY (Rectangle (P (V2 _ y)) (V2 _ _)) = fromIntegral y
+
+rectW :: (Integral a, Integral b) => Rectangle a -> b
+rectW (Rectangle (P (V2 _ _)) (V2 w _)) = fromIntegral w
+
+rectH :: (Integral a, Integral b) => Rectangle a -> b
+rectH (Rectangle (P (V2 _ _)) (V2 _ h)) = fromIntegral h
+
+rectP :: (Integral a, Integral b) => Rectangle a -> Point V2 b
+rectP r = (P (V2 (rectX r) (rectY r)))
+
+vX :: (Integral a, Integral b) => V2 a -> b
+vX (V2 x _) = fromIntegral x
+
+vY :: (Integral a, Integral b) => V2 a -> b
+vY (V2 _ y) = fromIntegral y
+
+
+textSurface :: MonadIO m => String -> Int -> String -> Raw.Color -> m Surface
+textSurface str size font clr = do
   font <- openFont fpath size
   surf <- renderUTF8Solid font str $ clr
   closeFont font
@@ -159,150 +286,95 @@ textSuraface str size font clr = do
 
 clr = Raw.Color
 
-makeState :: a -> Block -> BlockState a
-makeState x (BSection _ blocks) = BSRec x (map (makeState x) blocks)
-makeState x (BImage _) = BSOne x
-makeState x (BParagraph inl) = BSFew x $ replicate (length inl) x
 
-renderBlock :: Int -> Int -> Int -> Block -> BlockState Bool -> IO (Surface, BlockState [Rectangle Int])
-renderBlock ox oy w (BSection title blocks) (BSRec active sblocks) = do
-  titleSurf <- textSuraface title titleFontSize fpath $ clr 0xb0 0x80 0x80 0
+
+bottom :: Integral a => [Element] -> a
+bottom = fromIntegral . foldl max 0 .
+         concatMap (\(_, rs) -> map (\(r, _) -> rectY r + rectH r) rs)
+
+top :: Integral a => [Rectangle a] -> a
+top [] = 0
+top (r:rs) = fromIntegral . foldl min (rectY r) $ map rectY rs
+
+renderDoc :: [Int] -> [Element] -> Bool -> Int -> Block -> IO (Surface, [Element])
+renderDoc active elems redraw w b = do
+  -- todo: no need to blit all the elements all the time, optimize it
+  es <- getElements redraw
+  surf <- createRGBSurface (V2 (fromIntegral w) (bottom es)) RGBA4444
+  mapM_ (\(p, rs) -> do
+            when (active == p) $ surfaceFillRects
+              surf
+              (fromList $ map (fmap fromIntegral . fst) rs)
+              (V4 0x0 0x0 0x0 0xFF)
+            mapM_(\(r, s) -> surfaceBlit s Nothing surf (Just $ rectP r)) rs)
+    es
+  pure (surf, es)
+  where
+    getElements :: Bool -> IO [Element]
+    getElements True = do
+      mapM_ (\(_, rs) -> mapM_ (\(_, s) -> freeSurface s) rs) elems
+      rElements . snd <$> runStateT (renderBlock b []) (RenderState [] 0 0 w [])
+    getElements False = pure elems
+
+renderBlock :: Block -> [Int] -> StateT RenderState IO ()
+renderBlock (BSection title blocks) path = do
+  titleSurf <- textSurface title titleFontSize fpath $ clr 0xb0 0x80 0x80 0
   titleSurfDim@(V2 tw th) <- surfaceDimensions titleSurf
-  (oy', blockSurfs) <- foldM (\(oy', bs) (b, sb) -> do
-                                 (bl, bi) <- renderBlock (ox + sectionPaddingLeft) oy' (w - sectionPaddingLeft) b sb
-                                 let ah = case bi of
-                                       (BSRec [Rectangle _ (V2 _ h')] _) -> h'
-                                       (BSFew [Rectangle _ (V2 _ h')] _) -> h'
-                                       (BSOne [Rectangle _ (V2 _ h')]) -> h'
-                                 pure (oy' + ah, bs ++ [(bl, bi)]))
-                       (oy + fromIntegral th, [])
-                       (zip blocks sblocks)
-  blocksSurf <- joinBlocks (w - sectionPaddingLeft) (map fst blockSurfs) Nothing
-  blocksSurfDim@(V2 bw bh) <- surfaceDimensions blocksSurf
-  let totalHeight = th + bh
-  s <- createRGBSurface (V2 (fromIntegral w) totalHeight) RGBA4444
-  when (active) $ do
-    surfaceFillRect s Nothing (V4 0x00 0x00 0x00 0xa0)
-  surfaceBlit titleSurf Nothing s (Just (P (V2 0 0)))
-  surfaceBlit blocksSurf Nothing s
-    (Just (P (V2 (fromIntegral sectionPaddingLeft) th)))
-  mapM_ freeSurface [titleSurf, blocksSurf]
-  pure (s, BSRec [rect ox oy w totalHeight] $ map snd blockSurfs)
-renderBlock ox oy w (BImage path) (BSOne active) = do
-  is <- imgLoad path
-  (V2 iw ih) <- surfaceDimensions is
-  s <- createRGBSurface (V2 iw ih) RGBA4444
-  when active $ surfaceFillRect s Nothing (V4 0x00 0x00 0x00 0xa0)
-  surfaceBlit is Nothing s (Just (P (V2 0 0)))
-  freeSurface is
-  pure (s, BSOne [rect ox oy iw ih])
-renderBlock ox oy w (BParagraph inlines) (BSFew active as) = do
-  (s, rects) <- renderInlines ox oy w inlines active as
-  (V2 x y) <- surfaceDimensions s
-  pure (s, BSFew [rect ox oy x y] rects)
+  rs <- S.get
+  put $ rs { rX = rX rs + sectionPaddingLeft,
+             rY = rY rs + fromIntegral th,
+             rW = rW rs - sectionPaddingLeft }
+  zipWithM renderBlock blocks (map ((++) path . pure) [0..])
+  rs' <- S.get
+  put $ rs' { rX = rX rs,
+              rW = rW rs,
+              rElements =
+                (path, [(rect
+                          (rX rs)
+                          (rY rs)
+                          (rW rs)
+                          (bottom (rElements rs') - rY rs),
+                         titleSurf)])
+                : rElements rs'}
+renderBlock (BImage imgPath) path = do
+  s <- imgLoad imgPath
+  (V2 iw ih) <- surfaceDimensions s
+  rs <- S.get
+  put $ rs { rY = rY rs + fromIntegral ih,
+             rElements = (path, [(rect (rX rs) (rY rs) iw ih, s)]) : rElements rs }
+renderBlock (BParagraph inlines) path = do
+  rs <- S.get
+  zipWithM (renderInline (rX rs)) inlines (map ((++) path . pure) [0..])
+  rs' <- S.get
+  put $ rs' { rX = rX rs,
+              rW = rW rs,
+              rY = bottom (rElements rs'),
+              rElements = (path, []) : rElements rs'}
 
+renderInline :: Int -> Inline -> [Int] -> StateT RenderState IO ()
+renderInline origX (IText txt) = renderInline' origX txt (clr 0x80 0x80 0x80 0)
+renderInline origX (ILink txt _) = renderInline' origX txt (clr 0x80 0x80 0xa0 0)
 
-renderInlines :: Int -> Int -> Int
-              -> [Inline] -> Bool -> [Bool]
-              -> IO (Surface, [[Rectangle Int]])
-renderInlines ox oy w inl active as = do
-  inlines <- prepareInlines ox ox oy w (zip inl as)
-  let cX (Rectangle (P (V2 x y)) (V2 w' h')) = fromIntegral $ x + w'
-      cY (Rectangle (P (V2 x y)) (V2 w' h')) = fromIntegral $ y + h'
-      rectangles = map (map snd) inlines
-      sw = (foldl max 0 $ map cX $ concat rectangles) - fromIntegral ox
-      sh = (foldl max 0 $ map cY $ concat rectangles) - fromIntegral oy
-  s <- createRGBSurface (V2 sw sh) RGBA4444
-  when active $ surfaceFillRect s Nothing (V4 0x00 0x00 0x00 0xa0)
-  let relBlit x y surf = do
-        surfaceBlit surf Nothing s
-          (Just (P (V2 (fromIntegral x - fromIntegral ox)
-                     (fromIntegral y - fromIntegral oy))))
-        freeSurface surf
-  mapM_ (mapM_ (\(surf, (Rectangle (P (V2 x y)) _)) -> relBlit x y surf)) inlines
-  pure (s, map (map snd) inlines)
+renderInline' :: Int -> String -> Raw.Color -> [Int] -> StateT RenderState IO ()
+renderInline' origX txt c path = do
+  space <- textSurface " " fontSize fpath c
+  sDim <- surfaceDimensions space
+  freeSurface space
+  ws <- mapM (\w -> textSurface w fontSize fpath c) (words txt)
+  dims <- mapM surfaceDimensions ws
+  coordinates <- mapM (placeWord origX sDim) dims
+  rs <- S.get
+  put $ rs { rElements = (path, zip coordinates ws) : rElements rs }
 
-prepareInlines :: Int -> Int -> Int -> Int
-              -> [(Inline, Bool)]
-              -> IO [[(Surface, Rectangle Int)]]
-prepareInlines _ _ _ _ [] = pure []
-prepareInlines oox ox oy w ((it, active) : xs) = do
-  let (text, color) = inlineParams it
-  let textw = unwords $ words text
-  firstLine <- head <$> wordWrap fpath fontSize (w - ox) textw
-  otherLines <- wordWrap fpath fontSize w $ drop (length firstLine) textw
-  surfaces <- mapM
-    (\l -> do
-        ts <- textSuraface l fontSize fpath color
-        (V2 iw ih) <- surfaceDimensions ts
-        baseSurface <- createRGBSurface (V2 iw ih) RGBA4444
-        when active $
-          surfaceFillRect baseSurface Nothing (V4 0x00 0x00 0x00 0xa0)
-        surfaceBlit ts Nothing baseSurface (Just (P (V2 0 0)))
-        freeSurface ts
-        pure baseSurface)
-    (firstLine : otherLines)
-  dimensions <- mapM surfaceDimensions surfaces
-  -- compute rectangles from dimensions and offsets. it's different
-  -- for the first and the last ones, while same for others
-  let rectangles' = snd $ foldl
-        (\(y, rs) (V2 w' h') ->
-           (y + fromIntegral h',
-            rs ++ [rect oox y w' h']))
-        (oy, [])
-        dimensions
-      -- adjust the first one
-      rectangles = case rectangles' of
-        [] -> []
-        (Rectangle (P (V2 x y)) (V2 w' h'):xs) -> rect ox y w' h' : xs
-      -- get data from the last one (which may be the same as the first)
-      (nox, noy) = case reverse rectangles of
-        [] -> (ox, oy)
-        (Rectangle (P (V2 x y)) (V2 w' h'):xs) -> (x + w', y)
-  -- now we have new offsets, surfaces, and rectangles for the current
-  -- inline.
-  ((zip surfaces rectangles) :) <$> prepareInlines oox nox noy w xs
-
-
-inlineText :: Inline -> String
-inlineText (ILink s _) = s
-inlineText (IText s) = s
-
-inlineParams :: Inline -> (String, Raw.Color)
-inlineParams (ILink s _) = (s, clr 0x80 0x80 0xa0 0)
-inlineParams (IText s) = (s, clr 0x80 0x80 0x80 0)
-
-
-joinBlocks :: Int -> [Surface] -> Maybe (V4 Word8) -> IO Surface
-joinBlocks w surfs clr = do
-  dims <- mapM surfaceDimensions surfs
-  let totalHeight = foldl (\sum (V2 w h) -> sum + h) 0 dims
-  s <- createRGBSurface (V2 (fromIntegral w) totalHeight) RGBA4444
-  case clr of
-    Nothing -> pure ()
-    Just c -> surfaceFillRect s Nothing c
-  foldM (\offset (surf, (V2 w h)) ->
-           surfaceBlit surf Nothing s (Just (P (V2 0 offset)))
-           >> pure (h + offset)) 0
-    $ zip surfs dims
-  mapM_ freeSurface surfs
-  pure s
-
-
-wordWrap' :: TTFFont -> Int -> [String] -> Int -> IO [[String]]
-wordWrap' font w str pos
-  | pos < length str = do
-      szTxt@(w', h') <- sizeUTF8 font (unwords $ take (pos + 1) str)
-      if w' > w
-        then ((take pos str) :) <$> wordWrap' font w (drop pos str) 1
-        else wordWrap' font w str (pos + 1)
-  | length str == 0 = pure []
-  | otherwise = pure [str]
-
-
-wordWrap :: String -> Int -> Int -> String -> IO [String]
-wordWrap fontPath size w str = do
-  font <- openFont fontPath size
-  wrapped <- map ((++) " " . unwords) <$> wordWrap' font w (words str) 1
-  closeFont font
-  pure wrapped
+-- always prepends space or newline
+placeWord :: Int -> V2 CInt -> V2 CInt -> StateT RenderState IO (Rectangle Int)
+placeWord origX sDim wDim = do
+  rs <- S.get
+  let x = rX rs + vX sDim + vX wDim
+      (st, c) = if (x > rW rs)
+                then (rs { rX = origX + vX wDim, rY = rY rs + vY wDim },
+                      rect origX (rY rs + vY wDim) (vX wDim) (vY wDim))
+                else (rs { rX = x },
+                      rect (rX rs + vX sDim) (rY rs) (vX wDim) (vY wDim))
+  put st
+  pure c

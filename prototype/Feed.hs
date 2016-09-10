@@ -2,25 +2,24 @@ import Types
 import Text.Feed.Types
 import Text.Feed.Import
 import Text.Atom.Feed as TAF
-import Network.HTTP
+import Network.Download
 import Text.HTML.TagSoup
 
 import Data.Maybe
 import qualified Data.ByteString as B
-import Network.Stream
-import Network.URI
 
 main :: IO ()
 main = do
-  r <- simpleHTTP (getRequest "http://xkcd.com/atom.xml")
-  b <- getResponseBody r
-  d <- case parseFeedString b of
-    Just (AtomFeed f) -> makeDoc f
-    _ -> pure err
+  r <- openURIString "http://xkcd.com/atom.xml"
+  d <- case r of
+    Right b -> case parseFeedString b of
+      Just (AtomFeed f) -> makeDoc f
+      _ -> pure $ err "Failed to parse the feed"
+    Left e -> pure $ err $ "Failed to retrieve the feed: " ++ e
   putStrLn $ show d
   where
-    err = (BSection "Feed reader"
-           [BParagraph [IText "Failed to retrieve the feed"]])
+    err x = (BSection "Feed reader"
+           [BParagraph [IText x]])
 
 showTC :: TextContent -> String
 showTC (TextString s) = s
@@ -48,15 +47,18 @@ extractBlocks other = pure [BParagraph [IText $ showTC other]]
 
 extractBlocks' :: [Tag String] -> IO [Block]
 extractBlocks' (TagOpen "img" img : xs) =
-  case lookup "src" img >>= parseURI of
+  case lookup "src" img of
     Nothing -> pure []
     Just uri -> do
-      r <- simpleHTTP (Request uri GET [] B.empty) :: IO (Result (Response B.ByteString))
-      b <- getResponseBody r
-      let fn = "/tmp/" ++ (drop 28 $ fromJust $ lookup "src" img)
-      B.writeFile fn b
-      let picture = Just $ BImage fn
-      let alt = lookup "alt" img >>= \a -> pure (BParagraph [IText a])
-      -- writeFile fn b
-      pure $ catMaybes [picture, alt]
+      r <- openURI uri
+      case r of
+        Right b -> do
+          let fn = "/tmp/" ++ (map fileName $ fromJust $ lookup "src" img)
+          B.writeFile fn b
+          let picture = Just $ BImage fn
+          let alt = lookup "alt" img >>= \a -> pure (BParagraph [IText a])
+          pure $ catMaybes [picture, alt]
+        _ -> pure []
+  where fileName '/' = '_'
+        fileName x = x
 extractBlocks' _ = pure []
