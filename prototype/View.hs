@@ -38,6 +38,11 @@ data RenderState = RenderState { rPath :: [Int]
                                , rElements :: [Element]
                                }
 
+data RenderCache = RenderCache { rcSurfaceDim :: V2 CInt
+                               , rcTexture :: (Texture, Texture)
+                               , rcElements :: [Element]
+                               }
+
 
 fpath = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
 sectionPaddingLeft = 20
@@ -52,52 +57,51 @@ main = do
   window <- createWindow "( ﾉ ﾟｰﾟ)ﾉ ☀" defaultWindow {windowResizable = True}
   renderer <- createRenderer window (-1) defaultRenderer
   TTF.init
-  appLoop block Nothing [] [] 0 renderer
+  appLoop block Nothing [] 0 renderer
   TTF.quit
 
 
 appLoop :: Block
-        -> Maybe Surface
-        -> [Element]
+        -> Maybe RenderCache
         -> [Int]
         -> Int
         -> Renderer
         -> IO ()
-appLoop doc surf' elements' selection' yOffset' renderer = do
+appLoop doc rcache' selection' yOffset' renderer = do
   event <- waitEvent
+  events <- pollEvents
   rvp <- SDL.get (rendererViewport renderer)
 
-  let epl = eventPayload event
+  let epls = map eventPayload (event:events)
       (rw, rh) = maybe (200, 200) (\x -> (rectW x, rectH x)) rvp
-      (selection, yOffset) = navigate doc elements' selection' yOffset' epl
+      elements' = maybe [] rcElements rcache'
+      (selection, yOffset) =
+        foldl (\(s, y) epl -> navigate doc elements' s y epl) (selection', yOffset') epls
 
   -- todo: add link selection there, update active element here
-  handleLinkActions doc elements' selection yOffset epl
+  mapM_ (handleLinkActions doc elements' selection yOffset) epls
 
-  (surf, elements) <-
-    let render = renderDoc selection elements' (rerenderNeeded epl) rw doc in
-      case (surf', selection /= selection' || rerenderNeeded epl) of
-        (Just s, True) -> freeSurface s >> render
-        (Just s, _) -> pure (s, elements')
-        _ -> render
-
+  rcache <- let render = renderDoc renderer selection (any rerenderNeeded epls) rw doc in
+    case (rcache', selection /= selection' || any rerenderNeeded epls) of
+      (Just rc, True) -> render (Just rc)
+      (Just rc, _) -> pure rc
+      _ -> render Nothing
   -- show
-  when (redrawNeeded epl
-        || rerenderNeeded epl
+  when (any redrawNeeded epls
+        || any rerenderNeeded epls
         || yOffset /= yOffset'
         || selection /= selection') $ do
     rendererDrawColor renderer $= V4 0x10 0x10 0x10 0
     clear renderer
-    (V2 w h) <- surfaceDimensions surf
-    -- todo: it's unnecessary to do this on every scroll, optimize
-    texture <- createTextureFromSurface renderer surf
-    copy renderer texture Nothing
+    let (V2 w h) = rcSurfaceDim rcache
+    copy renderer (fst $ rcTexture rcache) Nothing
       (Just (rect 0 yOffset w h))
-    destroyTexture texture
+    copy renderer (snd $ rcTexture rcache) Nothing
+      (Just (rect 0 yOffset w h))
     present renderer
 
-  unless (textInput epl == Just "q") $
-    appLoop doc (Just surf) elements selection yOffset renderer
+  unless (any ((==) (Just "q") . textInput) epls) $
+    appLoop doc (Just rcache) selection yOffset renderer
 
 
 inRectangle :: (Integral a, Integral b) => Point V2 a -> Rectangle b -> Bool
@@ -296,25 +300,42 @@ top :: Integral a => [Rectangle a] -> a
 top [] = 0
 top (r:rs) = fromIntegral . foldl min (rectY r) $ map rectY rs
 
-renderDoc :: [Int] -> [Element] -> Bool -> Int -> Block -> IO (Surface, [Element])
-renderDoc active elems redraw w b = do
-  -- todo: no need to blit all the elements all the time, optimize it
-  es <- getElements redraw
-  surf <- createRGBSurface (V2 (fromIntegral w) (bottom es)) RGBA4444
-  mapM_ (\(p, rs) -> do
+-- todo: could be optimized further
+makeTexture :: Renderer -> [Int] -> Int -> [Element] -> IO Texture
+makeTexture renderer active w es = do
+  bgSurf <- createRGBSurface (V2 (fromIntegral w) (bottom es)) RGBA4444
+  mapM_ (\(p, rs) ->
             when (active == p) $ surfaceFillRects
-              surf
+              bgSurf
               (fromList $ map (fmap fromIntegral . fst) rs)
-              (V4 0x0 0x0 0x0 0xFF)
-            mapM_(\(r, s) -> surfaceBlit s Nothing surf (Just $ rectP r)) rs)
+              (V4 0x0 0x0 0x0 0xFF))
     es
-  pure (surf, es)
-  where
-    getElements :: Bool -> IO [Element]
-    getElements True = do
-      mapM_ (\(_, rs) -> mapM_ (\(_, s) -> freeSurface s) rs) elems
-      rElements . snd <$> runStateT (renderBlock b []) (RenderState [] 0 0 w [])
-    getElements False = pure elems
+  bgTexture <- createTextureFromSurface renderer bgSurf
+  freeSurface bgSurf
+  pure bgTexture
+
+renderDoc :: Renderer -> [Int] -> Bool -> Int -> Block -> Maybe RenderCache -> IO RenderCache
+renderDoc renderer active True w b rcache = do
+  case rcache of
+    Just rc -> do
+      mapM_ (\(_, rs) -> mapM_ (\(_, s) -> freeSurface s) rs) $ rcElements rc
+      destroyTexture $ fst $ rcTexture rc
+      destroyTexture $ snd $ rcTexture rc
+    Nothing -> pure ()
+  elements <- rElements . snd <$> runStateT (renderBlock b []) (RenderState [] 0 0 w [])
+  let surfDim = (V2 (fromIntegral w) (bottom elements))
+  fgSurf <- createRGBSurface surfDim RGBA4444
+  mapM_ (mapM_ (\(r, s) -> surfaceBlit s Nothing fgSurf (Just $ rectP r)) . snd) elements
+  fgTexture <- createTextureFromSurface renderer fgSurf
+  freeSurface fgSurf
+  bgTexture <- makeTexture renderer active w elements
+  pure $ RenderCache surfDim (bgTexture, fgTexture) elements
+renderDoc renderer active False w b (Just rcache) = do
+  destroyTexture $ fst $ rcTexture rcache
+  t <- makeTexture renderer active w (rcElements rcache)
+  pure $ rcache { rcTexture = (t, snd $ rcTexture rcache) }
+renderDoc renderer active redraw w b rcache = undefined -- should not happen
+
 
 renderBlock :: Block -> [Int] -> StateT RenderState IO ()
 renderBlock (BSection title blocks) path = do
