@@ -40,7 +40,7 @@ data RenderState = RenderState { rPath :: [Int]
                                }
 
 data RenderCache = RenderCache { rcSurfaceDim :: V2 CInt
-                               , rcTexture :: (Texture, Texture)
+                               , rcTexture :: Texture
                                -- ^ background and foreground textures
                                , rcElements :: [Element]
                                }
@@ -86,8 +86,8 @@ appLoop doc rcache' selection' yOffset' renderer = do
   -- todo: add link selection there, update active element here
   mapM_ (handleLinkActions doc elements' selection yOffset) epls
 
-  rcache <- let render = renderDoc renderer selection (any rerenderNeeded epls) rw doc in
-    case (rcache', selection /= selection' || any rerenderNeeded epls) of
+  rcache <- let render = renderDoc renderer yOffset rw rh selection (any rerenderNeeded epls) doc in
+    case (rcache', selection /= selection' || yOffset /= yOffset' || any rerenderNeeded epls) of
       (Just rc, True) -> render (Just rc)
       (Just rc, _) -> pure rc
       _ -> render Nothing
@@ -99,10 +99,7 @@ appLoop doc rcache' selection' yOffset' renderer = do
     rendererDrawColor renderer $= V4 0x06 0x10 0x14 0
     clear renderer
     let (V2 w h) = rcSurfaceDim rcache
-    copy renderer (fst $ rcTexture rcache) Nothing
-      (Just (rect 0 yOffset w h))
-    copy renderer (snd $ rcTexture rcache) Nothing
-      (Just (rect 0 yOffset w h))
+    copy renderer (rcTexture rcache) Nothing Nothing
     present renderer
 
   unless (any ((==) (Just "q") . textInput) epls) $
@@ -305,41 +302,56 @@ top :: Integral a => [Rectangle a] -> a
 top [] = 0
 top (r:rs) = fromIntegral . foldl min (rectY r) $ map rectY rs
 
--- todo: could be optimized further
-makeTexture :: Renderer -> [Int] -> Int -> [Element] -> IO Texture
-makeTexture renderer active w es = do
-  bgSurf <- createRGBSurface (V2 (fromIntegral w) (bottom es)) RGBA4444
+
+
+overlap :: Integral a => Rectangle a -> Rectangle a -> Maybe (Rectangle a, Rectangle a)
+overlap (Rectangle (P (V2 x1 y1)) (V2 w1 h1)) (Rectangle (P (V2 x2 y2)) (V2 w2 h2)) =
+  let x = max x1 x2
+      y = max y1 y2
+      w = min (x1 + w1) (x2 + w2) - x
+      h = min (y1 + h1) (y2 + h2) - y
+  in if w > 0 && h > 0
+     then Just (rect (x - x1) (y - y1) w h, rect (x - x2) (y - y2) w h)
+     else Nothing
+
+makeTexture :: Renderer -> [Int] -> Int -> Int -> Int -> [Element] -> IO Texture
+makeTexture renderer active y rw rh es = do
+  bgSurf <- createRGBSurface (V2 (fromIntegral rw) (fromIntegral rh)) RGBA4444
   mapM_ (\(p, rs) ->
-            when (active == p) $ surfaceFillRects
-              bgSurf
-              (fromList $ map (fmap fromIntegral . fst) rs)
-              (V4 0x00 0x00 0x00 0xFF))
+           mapM_ (\(r, s) -> case overlap (rect 0 (- y) rw rh) r of
+                   Nothing -> pure ()
+                   Just (r1, r2) -> do
+                     when (active == p) $ surfaceFillRect
+                       bgSurf
+                       (Just $ fmap fromIntegral r1)
+                       (V4 0x00 0x00 0x00 0xFF)
+                     surfaceBlit s
+                       (Just $ fmap fromIntegral r2)
+                       bgSurf
+                       (Just (P (V2 (rectX r1) (rectY r1))))
+                 )
+           rs
+        )
     es
   bgTexture <- createTextureFromSurface renderer bgSurf
   freeSurface bgSurf
   pure bgTexture
 
-renderDoc :: Renderer -> [Int] -> Bool -> Int -> Block -> Maybe RenderCache -> IO RenderCache
-renderDoc renderer active True w b rcache = do
+renderDoc :: Renderer -> Int -> Int -> Int -> [Int] -> Bool -> Block -> Maybe RenderCache -> IO RenderCache
+renderDoc renderer y rw rh active True b rcache = do
   case rcache of
     Just rc -> do
       mapM_ (\(_, rs) -> mapM_ (\(_, s) -> freeSurface s) rs) $ rcElements rc
-      destroyTexture $ fst $ rcTexture rc
-      destroyTexture $ snd $ rcTexture rc
+      destroyTexture $ rcTexture rc
     Nothing -> pure ()
-  elements <- rElements . snd <$> runStateT (renderBlock b []) (RenderState [] 0 0 w [])
-  let surfDim = (V2 (fromIntegral w) (bottom elements))
-  fgSurf <- createRGBSurface surfDim RGBA4444
-  mapM_ (mapM_ (\(r, s) -> surfaceBlit s Nothing fgSurf (Just $ rectP r)) . snd) elements
-  fgTexture <- createTextureFromSurface renderer fgSurf
-  freeSurface fgSurf
-  bgTexture <- makeTexture renderer active w elements
-  pure $ RenderCache surfDim (bgTexture, fgTexture) elements
-renderDoc renderer active False w b (Just rcache) = do
-  destroyTexture $ fst $ rcTexture rcache
-  t <- makeTexture renderer active w (rcElements rcache)
-  pure $ rcache { rcTexture = (t, snd $ rcTexture rcache) }
-renderDoc renderer active redraw w b rcache = undefined -- should not happen
+  elements <- rElements . snd <$> runStateT (renderBlock b []) (RenderState [] 0 0 rw [])
+  t <- makeTexture renderer active y rw rh elements
+  pure $ RenderCache (V2 0 0) t elements
+renderDoc renderer y rw rh active False b (Just rcache) = do
+  destroyTexture $ rcTexture rcache
+  t <- makeTexture renderer active y rw rh (rcElements rcache)
+  pure $ rcache { rcTexture = t }
+renderDoc renderer y rw rh active redraw b rcache = undefined -- should not happen
 
 
 renderBlock :: Block -> [Int] -> StateT RenderState IO ()
