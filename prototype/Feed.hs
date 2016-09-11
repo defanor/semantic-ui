@@ -4,6 +4,7 @@ import Text.Atom.Feed as TAF
 import Text.Feed.Query
 import Text.RSS.Syntax as RS
 import qualified Data.ByteString.Lazy.Char8 as L8
+import qualified Data.ByteString.Lazy as BL
 import Text.HTML.TagSoup
 import Data.Maybe
 import System.Environment
@@ -15,7 +16,7 @@ import Types
 
 
 main :: IO ()
-main = getArgs >>= mapM getFeed >>= putStrLn . show . BSection "Feeds"
+main = getArgs >>= mapM getFeed >>= BL.putStrLn . printBlock . BSection "Feeds"
 
 getFeed :: String -> IO Block
 getFeed uri = do
@@ -33,7 +34,9 @@ parseItem (AtomItem e) = do
      [BParagraph (IText "URIs:" : map makeURI (entryLinks e))]]
 parseItem (FT.RSSItem i) = BSection (maybe "No title" id (rssItemTitle i)) <$> do
   descr <- maybe (pure []) (extractBlocks' . parseTags) $ rssItemDescription i
-  pure descr
+  pure $ concat [maybe [] (\x -> [BParagraph [IText $ "Updated: " ++ x]]) (rssItemPubDate i),
+                 descr,
+                 maybe [] (\x -> [BParagraph [IText "URI: ", ILink x x]]) (rssItemLink i)]
 parseItem x = undefined
 
 

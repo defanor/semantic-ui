@@ -40,6 +40,33 @@ data Block = BParagraph [Inline]
            | BSection String [Block]
 ```
 
-And how it looks like:
+A screenshot:
 
 ![feeds in the viewer](http://paste.uberspace.net/feed-reader.png)
+
+It uses s-expressions for serialization, looks like this:
+
+```
+(section "Feeds"
+         (section "xkcd.com"
+                  (section "Wrong"
+                           (paragraph "Updated: 2016-09-09T00:00:00Z")
+                           (image "/tmp/http:__imgs.xkcd.com_comics_wrong.png")
+                           (paragraph "Hang on, I just remembered another thing I'm right about. See...")
+                           (paragraph "URIs:" (link "http://xkcd.com/1731/" "http://xkcd.com/1731/")))
+                  (section "Starshade"
+                           (paragraph "Updated: 2016-09-07T00:00:00Z")
+                           (image "/tmp/http:__imgs.xkcd.com_comics_starshade.png")
+                           (paragraph "The New Worlds Mission is already trying to get funding for this, but NASA sponsored their proposal, so it will be hard to catch the telescope people by surprise with it.")
+                           (paragraph "URIs:" (link "http://xkcd.com/1730/" "http://xkcd.com/1730/")))
+                  (section "Migrating Geese"
+                           (paragraph "Updated: 2016-09-05T00:00:00Z")
+                           (image "/tmp/http:__imgs.xkcd.com_comics_migrating_geese.png")
+                           (paragraph "\"Hey guys! I have a great idea for a migration!\" \"Dammit, Kevin.\"")
+                           (paragraph "URIs:" (link "http://xkcd.com/1729/" "http://xkcd.com/1729/")))
+                  (section "Cron Mail"
+                           (paragraph "Updated: 2016-09-02T00:00:00Z")
+                           (image "/tmp/http:__imgs.xkcd.com_comics_cron_mail.png")
+                           (paragraph "Take THAT, piece of 1980s-era infrastructure I've inexplicably maintained on my systems for 15 years despite never really learning how it works.")
+                           (paragraph "URIs:" (link "http://xkcd.com/1728/" "http://xkcd.com/1728/")))))
+```

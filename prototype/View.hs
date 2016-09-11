@@ -25,6 +25,7 @@ import Foreign.C.Types
 import GHC.Exts
 import Control.Applicative
 import System.IO
+import qualified Data.ByteString.Lazy as BL
 
 import Types
 
@@ -54,14 +55,16 @@ paddingBottom = 5
 
 main :: IO ()
 main = do
-  block <- readLn
-  initialize [InitEvents, InitVideo]
-  window <- createWindow "( ﾉ ﾟｰﾟ)ﾉ ☀" defaultWindow {windowResizable = True}
-  renderer <- createRenderer window (-1) defaultRenderer
-  TTF.init
-  appLoop block Nothing [] 0 renderer
-  TTF.quit
-
+  b <- parseBlock <$> BL.getContents
+  case b of
+    Left err -> putStrLn err
+    Right block -> do
+      initialize [InitEvents, InitVideo]
+      window <- createWindow "( ﾉ ﾟｰﾟ)ﾉ ☀" defaultWindow {windowResizable = True}
+      renderer <- createRenderer window (-1) defaultRenderer
+      TTF.init
+      appLoop block Nothing [] 0 renderer
+      TTF.quit
 
 appLoop :: Block
         -> Maybe RenderCache

@@ -19,7 +19,10 @@ executable view
   main-is:             View.hs
   other-modules:       Types
   -- other-extensions:
-  build-depends:       base >=4.8 && <4.9
+  build-depends:       atto-lisp
+                     , attoparsec >= 0.13.0.1
+                     , base >=4.8 && <4.9
+                     , bytestring >= 0.10.6.0
                      , linear
                      , mtl >= 2.2.1
                      , sdl2
@@ -37,7 +40,11 @@ executable feed
   main-is:             Feed.hs
   other-modules:       Types
   -- other-extensions:
-  build-depends:       base >=4.8 && <4.9
+  build-depends:       atto-lisp
+                     , text
+                     , attoparsec >= 0.13.0.1
+                     , base >=4.8 && <4.9
+                     , bytestring >= 0.10.6.0
                      , bytestring >= 0.10.6.0
                      , feed >= 0.3 && < 0.4
                      , http-client >= 0.5.1
