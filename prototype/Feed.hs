@@ -11,18 +11,19 @@ import System.Environment
 
 import Network.HTTP.Simple
 import Network.HTTP.Client
+import Control.Concurrent.Async
 
 import Types
 
 
 main :: IO ()
-main = getArgs >>= mapM getFeed >>= BL.putStrLn . printBlock . BSection "Feeds"
+main = getArgs >>= mapConcurrently getFeed >>= BL.putStrLn . printBlock . BSection "Feeds"
 
 getFeed :: String -> IO Block
 getFeed uri = do
   r <- httpLBS =<< parseRequest uri
   case parseFeedString (L8.unpack $ responseBody r) of
-    Just f -> BSection (getFeedTitle f) <$> mapM parseItem (getFeedItems f)
+    Just f -> BSection (getFeedTitle f) <$> mapConcurrently parseItem (getFeedItems f)
     Nothing -> pure $ BSection "error" [BParagraph [IText "Failed to parse", ILink uri uri]]
 
 parseItem :: Item -> IO Block

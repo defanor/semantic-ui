@@ -40,8 +40,8 @@ executable feed
   main-is:             Feed.hs
   other-modules:       Types
   -- other-extensions:
-  build-depends:       atto-lisp
-                     , text
+  build-depends:       async >= 2.0.2
+                     , atto-lisp
                      , attoparsec >= 0.13.0.1
                      , base >=4.8 && <4.9
                      , bytestring >= 0.10.6.0
@@ -51,5 +51,6 @@ executable feed
                      , http-conduit
                      , mtl >= 2.2.1
                      , tagsoup >= 0.14 && < 0.15
+                     , text
   -- hs-source-dirs:
   default-language:    Haskell2010
