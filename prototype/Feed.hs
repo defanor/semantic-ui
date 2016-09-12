@@ -12,6 +12,8 @@ import System.Environment
 import Network.HTTP.Simple
 import Network.HTTP.Client
 import Control.Concurrent.Async
+import System.Directory
+import Control.Monad
 
 import Types
 
@@ -60,11 +62,13 @@ extractBlocks' (TagOpen "img" img : xs) =
   case lookup "src" img of
     Nothing -> pure []
     Just uri -> do
-      r <- httpLBS =<< parseRequest uri
       let fn = "/tmp/" ++ (map fileName $ fromJust $ lookup "src" img)
           picture = Just $ BImage fn
           alt = lookup "alt" img >>= \a -> pure (BParagraph [IText a])
-      L8.writeFile fn $ responseBody r
+      exists <- doesFileExist fn
+      unless exists $ do
+        r <- httpLBS =<< parseRequest uri
+        L8.writeFile fn $ responseBody r
       rest <- extractBlocks' xs
       pure $ catMaybes [picture, alt] ++ rest
   where fileName '/' = '_'
