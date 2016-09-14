@@ -82,7 +82,7 @@ appLoop doc rcache' selection' yOffset' renderer = do
       (rw, rh) = maybe (200, 200) (\x -> (rectW x, rectH x)) rvp
       elements' = maybe [] rcElements rcache'
       (selection, yOffset) =
-        foldl (\(s, y) epl -> navigate doc elements' s y epl) (selection', yOffset') epls
+        foldl (\(s, y) epl -> navigate doc elements' s y rh epl) (selection', yOffset') epls
 
   -- todo: add link selection there, update active element here
   mapM_ (handleLinkActions doc elements' selection yOffset) epls
@@ -218,17 +218,19 @@ handleLinkActions b es s y epl = pure ()
 
 
 -- todo: move selection on scroll
-navigate :: Block -> [Element] -> [Int] -> Int -> EventPayload -> ([Int], Int)
-navigate b es p y (MouseWheelEvent (MouseWheelEventData _ _ (V2 _ i))) =
-  (p, y + 50 * fromIntegral i)
-navigate b es p y epl = maybe (p, y) id $ do
+navigate :: Block -> [Element] -> [Int] -> Int -> Int -> EventPayload -> ([Int], Int)
+navigate b es p y h (MouseWheelEvent (MouseWheelEventData _ _ (V2 _ i))) =
+  (p, y + (div h 4) * fromIntegral i)
+navigate b es p y h epl = maybe (p, y) id $ do
   ti <- textInput epl
   navigateStruct ti <|> navigatePos ti
   where
     navigatePos :: Text.Text -> Maybe ([Int], Int)
     navigatePos c = do
-      f <- lookup c [ ("f", (flip (-) 50)), ("b", (+ 50)) ]
-      pure (p, f y)
+      y' <- lookup c [ ("f", - (div h 4)),
+                       ("b", div h 4),
+                       (" ", - h)]
+      pure (p, y + y')
     navigateStruct :: Text.Text -> Maybe ([Int], Int)
     navigateStruct c = do
       f <- lookup c [ ("n", sNextCycle), ("p", sPrevCycle)
