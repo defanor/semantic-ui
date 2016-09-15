@@ -13,9 +13,9 @@ the ability to just do its job without dealing with UI.
 ## Prototype
 
 In the `prototype` directory, there's one of the prototypes, which
-includes two programs: `feed`, which loads an atom feed and packs it
-into a structure, and `view`, which reads that structure, and renders
-it using SDL. The viewer is designed to resemble an
+includes two programs: `feed`, which loads feeds and packs them into a
+structure, and `view`, which reads that structure, and renders it
+using SDL. The viewer is designed to resemble an
 [info](https://en.wikipedia.org/wiki/Info_%28Unix%29) reader, but with
 graphics, and aiming to be more interactive (i.e., rendering not
 static documents, but a basic and changing program UI, and passing
