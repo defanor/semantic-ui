@@ -29,6 +29,14 @@ can be executed simply by piping `feed` output into `view` input:
 feed http://xkcd.com/atom.xml https://feeds.feedburner.com/InvisibleBread | view | xargs -L 1 xdg-open
 ```
 
+Controls similar to those of `info`: `[`/`]`, `p`/`n`, `u` for
+structured navigation; space, `f`/`b`, and mouse scroll for positional
+navigation; mouse click on a link prints its target into stdout.
+
+A screenshot:
+
+![feeds in the viewer](http://paste.uberspace.net/feed-reader.png)
+
 The current document structure:
 
 ```haskell
@@ -40,33 +48,28 @@ data Block = BParagraph [Inline]
            | BSection String [Block]
 ```
 
-A screenshot:
-
-![feeds in the viewer](http://paste.uberspace.net/feed-reader.png)
-
 It uses s-expressions for serialization, looks like this:
 
 ```
-(section "Feeds"
-         (section "xkcd.com"
-                  (section "Wrong"
-                           (paragraph "Updated: 2016-09-09T00:00:00Z")
-                           (image "/tmp/http:__imgs.xkcd.com_comics_wrong.png")
-                           (paragraph "Hang on, I just remembered another thing I'm right about. See...")
-                           (paragraph "URIs:" (link "http://xkcd.com/1731/" "http://xkcd.com/1731/")))
-                  (section "Starshade"
-                           (paragraph "Updated: 2016-09-07T00:00:00Z")
-                           (image "/tmp/http:__imgs.xkcd.com_comics_starshade.png")
-                           (paragraph "The New Worlds Mission is already trying to get funding for this, but NASA sponsored their proposal, so it will be hard to catch the telescope people by surprise with it.")
-                           (paragraph "URIs:" (link "http://xkcd.com/1730/" "http://xkcd.com/1730/")))
-                  (section "Migrating Geese"
-                           (paragraph "Updated: 2016-09-05T00:00:00Z")
-                           (image "/tmp/http:__imgs.xkcd.com_comics_migrating_geese.png")
-                           (paragraph "\"Hey guys! I have a great idea for a migration!\" \"Dammit, Kevin.\"")
-                           (paragraph "URIs:" (link "http://xkcd.com/1729/" "http://xkcd.com/1729/")))
-                  (section "Cron Mail"
-                           (paragraph "Updated: 2016-09-02T00:00:00Z")
-                           (image "/tmp/http:__imgs.xkcd.com_comics_cron_mail.png")
-                           (paragraph "Take THAT, piece of 1980s-era infrastructure I've inexplicably maintained on my systems for 15 years despite never really learning how it works.")
-                           (paragraph "URIs:" (link "http://xkcd.com/1728/" "http://xkcd.com/1728/")))))
+(section "Entries"
+         (section "Solar Spectrum"
+                  (paragraph "Date: 2016-09-15 00:00:00 UTC")
+                  (image "/home/defanor/.cache/feeds/http://imgs.xkcd.com/comics/solar_spectrum.png")
+                  (paragraph "I still don't understand why the Sun paid the extra money for Transitions lenses.")
+                  (paragraph "URI: " (link "http://xkcd.com/1733/" "http://xkcd.com/1733/")))
+         (section "Earth Temperature Timeline"
+                  (paragraph "Date: 2016-09-12 00:00:00 UTC")
+                  (image "/home/defanor/.cache/feeds/http://imgs.xkcd.com/comics/earth_temperature_timeline.png")
+                  (paragraph "[After setting your car on fire] Listen, your car's temperature has changed before.")
+                  (paragraph "URI: " (link "http://xkcd.com/1732/" "http://xkcd.com/1732/")))
+         (section "Wrong"
+                  (paragraph "Date: 2016-09-09 00:00:00 UTC")
+                  (image "/home/defanor/.cache/feeds/http://imgs.xkcd.com/comics/wrong.png")
+                  (paragraph "Hang on, I just remembered another thing I'm right about. See...")
+                  (paragraph "URI: " (link "http://xkcd.com/1731/" "http://xkcd.com/1731/")))
+         (section "Starshade"
+                  (paragraph "Date: 2016-09-07 00:00:00 UTC")
+                  (image "/home/defanor/.cache/feeds/http://imgs.xkcd.com/comics/starshade.png")
+                  (paragraph "The New Worlds Mission is already trying to get funding for this, but NASA sponsored their proposal, so it will be hard to catch the telescope people by surprise with it.")
+                  (paragraph "URI: " (link "http://xkcd.com/1730/" "http://xkcd.com/1730/"))))
 ```
