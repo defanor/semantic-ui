@@ -34,6 +34,7 @@ executable feed
                      , mtl >= 2.2.1
                      , tagsoup >= 0.14 && < 0.15
                      , text
+                     , time >= 1.5.0.1
   -- hs-source-dirs:
   default-language:    Haskell2010
 

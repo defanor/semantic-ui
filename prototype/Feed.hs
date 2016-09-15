@@ -14,6 +14,9 @@ import Control.Concurrent.Async
 import System.Directory
 import System.FilePath
 import Control.Monad
+import Control.Applicative
+import Data.List
+import Data.Time.Clock
 
 import Types
 
@@ -22,28 +25,28 @@ main :: IO ()
 main = do
   cacheDir <- getXdgDirectory XdgCache "feeds"
   createDirectoryIfMissing True cacheDir
-  getArgs >>= mapConcurrently (getFeed cacheDir) >>= L8.putStrLn . printBlock . BSection "Feeds"
+  entries <- getArgs >>= mapConcurrently (getFeed cacheDir)
+  L8.putStrLn $ printBlock $ BSection "Entries" $
+    map snd $ reverse $  sortOn fst $ catMaybes $ concat entries
 
-getFeed :: FilePath -> String -> IO Block
+getFeed :: FilePath -> String -> IO [Maybe (UTCTime, Block)]
 getFeed cd uri = do
   r <- httpLBS =<< parseRequest uri
   case parseFeedString (L8.unpack $ responseBody r) of
-    Just f -> BSection (getFeedTitle f) <$> mapConcurrently (parseItem cd) (getFeedItems f)
-    Nothing -> pure $ BSection "error" [BParagraph [IText "Failed to parse", ILink uri uri]]
+    Just f -> mapConcurrently (parseItem cd) (getFeedItems f)
+    Nothing -> pure []
 
-parseItem :: FilePath -> Item -> IO Block
-parseItem cd (AtomItem e) = do
-  summary <- maybe (pure []) (extractBlocks cd) $ entrySummary e
-  pure $ BSection (showTC $ entryTitle e) $ concat
-    [[BParagraph [IText $ "Updated: " ++ entryUpdated e]],
-     summary,
-     [BParagraph (IText "URIs:" : map makeURI (entryLinks e))]]
-parseItem cd (FT.RSSItem i) = BSection (maybe "No title" id (rssItemTitle i)) <$> do
-  descr <- maybe (pure []) (extractBlocks' cd . parseTags) $ rssItemDescription i
-  pure $ concat [maybe [] (\x -> [BParagraph [IText $ "Updated: " ++ x]]) (rssItemPubDate i),
-                 descr,
-                 maybe [] (\x -> [BParagraph [IText "URI: ", ILink x x]]) (rssItemLink i)]
-parseItem _ _ = undefined
+parseItem :: FilePath -> Item -> IO (Maybe (UTCTime, Block))
+parseItem cd i = do
+  case (getItemPublishDate i, getItemSummary i <|> getItemDescription i) of
+    (Just (Just t), Just sum) -> do
+      summary <- extractBlocks' cd $ parseTags sum
+      let blocks = concat
+            [[BParagraph [IText $ "Date: " ++ show t]],
+             summary,
+             maybe [] (\uri -> [BParagraph [IText "URI: ", ILink uri uri]]) (getItemLink i)]
+      pure $ Just (t, BSection (maybe "No title" id $ getItemTitle i) blocks)
+    _ -> pure Nothing
 
 
 showTC :: TextContent -> String
@@ -53,8 +56,6 @@ showTC other = show other
 makeURI :: Link -> Inline
 makeURI l = ILink (maybe (linkHref l) id (linkTitle l)) (linkHref l)
 
--- that's awkward, but apparently the recent atom revision allows html
--- in summaries
 extractBlocks :: FilePath -> TextContent -> IO [Block]
 extractBlocks cd (HTMLString s) = extractBlocks' cd $ parseTags s
 extractBlocks _ other = pure [BParagraph [IText $ showTC other]]
