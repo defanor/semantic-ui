@@ -434,12 +434,13 @@ renderInline' font origX txt c path = do
 placeWord :: Int -> V2 CInt -> V2 CInt -> StateT RenderState IO (Rectangle Int)
 placeWord origX sDim wDim = do
   rs <- S.get
-  let spaceWidth = fromIntegral (vX sDim) / 2
-      x = rX rs + floor spaceWidth + vX wDim
+  let spaceWidth = vX sDim
+      hsw = fromIntegral spaceWidth / 2
+      x = rX rs + vX wDim
       (st, c) = if (x > rW rs)
-                then (rs { rX = origX + vX wDim + floor spaceWidth, rY = rY rs + vY wDim + paddingLine},
+                then (rs { rX = origX + vX wDim + spaceWidth, rY = rY rs + vY wDim + paddingLine},
                       rect origX (rY rs + vY wDim + paddingLine) (vX wDim) (vY wDim))
-                else (rs { rX = x + floor spaceWidth },
-                      rect (rX rs + vX sDim) (rY rs) (vX wDim) (vY wDim))
+                else (rs { rX = x + spaceWidth},
+                      rect (rX rs + round hsw) (rY rs) (vX wDim) (vY wDim))
   put st
   pure c
