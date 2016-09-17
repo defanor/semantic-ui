@@ -51,6 +51,7 @@ feed http://xkcd.com/atom.xml \
 ```haskell
 data Inline = IText String
             | ILink String String
+            | ICode (Maybe String) String
 
 data Block = BParagraph [Inline]
            | BImage String
@@ -83,3 +84,8 @@ data Block = BParagraph [Inline]
                   (paragraph "The New Worlds Mission is already trying to get funding for this, but NASA sponsored their proposal, so it will be hard to catch the telescope people by surprise with it.")
                   (paragraph "URI: " (link "http://xkcd.com/1730/" "http://xkcd.com/1730/"))))
 ```
+
+### Dependencies
+
+Currently it depends, among other things, on a
+[hs-sdl2-image fork](https://github.com/defanor/hs-sdl2-image).
