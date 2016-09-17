@@ -289,9 +289,9 @@ vY (V2 _ y) = fromIntegral y
 
 
 textSurface :: MonadIO m => String -> Int -> String -> Raw.Color -> m Surface
-textSurface str size font clr = do
+textSurface str size font c = do
   font <- openFont font size
-  surf <- renderUTF8Solid font str $ clr
+  surf <- renderUTF8Shaded font str c (clr 0x06 0x10 0x14 0)
   closeFont font
   pure surf
 
@@ -326,10 +326,12 @@ makeTexture renderer active y rw rh es = do
            mapM_ (\(r, s) -> case overlap (rect 0 (- y) rw rh) r of
                    Nothing -> pure ()
                    Just (r1, r2) -> do
-                     when (active == p) $ surfaceFillRect
-                       bgSurf
-                       (Just $ fmap fromIntegral r1)
-                       (V4 0x00 0x00 0x00 0xFF)
+                     when (active == p) $ do
+                       surfaceFillRect bgSurf
+                         (Just $ fmap fromIntegral r1) (V4 0xA0 0xD0 0xB0 0xFF)
+                       surfaceFillRect bgSurf
+                         (Just $ rect (rectX r1 + 1) (rectY r1 + 1) (rectW r1 - 2) (rectH r1 - 2))
+                         (V4 0x06 0x10 0x14 0)
                      surfaceBlit s
                        (Just $ fmap fromIntegral r2)
                        bgSurf
