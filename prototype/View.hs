@@ -48,10 +48,12 @@ data RenderCache = RenderCache { rcSurfaceDim :: V2 CInt
 
 
 fpath = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+fpathMono = "/usr/share/fonts/dejavu/DejaVuSansMono.ttf"
 sectionPaddingLeft = 20
 titleFontSize = 20
 fontSize = 16
-paddingBottom = 5
+paddingBottom = 10
+paddingLine = 3
 
 
 main :: IO ()
@@ -288,7 +290,7 @@ vY (V2 _ y) = fromIntegral y
 
 textSurface :: MonadIO m => String -> Int -> String -> Raw.Color -> m Surface
 textSurface str size font clr = do
-  font <- openFont fpath size
+  font <- openFont font size
   surf <- renderUTF8Solid font str $ clr
   closeFont font
   pure surf
@@ -359,7 +361,8 @@ renderDoc renderer y rw rh active redraw b rcache = undefined -- should not happ
 
 renderBlock :: Block -> [Int] -> StateT RenderState IO ()
 renderBlock (BSection title blocks) path = do
-  titleSurf <- textSurface title titleFontSize fpath $ clr 0xA0 0xD0 0xB0 0
+  titleSurf <- textSurface title (max fontSize (titleFontSize - length path)) fpath
+    $ clr 0xA0 0xD0 0xB0 0
   titleSurfDim@(V2 tw th) <- surfaceDimensions titleSurf
   rs <- S.get
   put $ rs { rX = rX rs + sectionPaddingLeft,
@@ -391,17 +394,35 @@ renderBlock (BParagraph inlines) path = do
               rW = rW rs,
               rY = bottom (rElements rs') + paddingBottom,
               rElements = (path, []) : rElements rs'}
+renderBlock (BCode lang str) path = do
+  rs <- S.get
+  zipWithM renderLine (lines str) (map ((++) path . pure) [0..])
+  rs' <- S.get
+  put $ rs' { rX = rX rs,
+              rY = rY rs' + paddingBottom,
+              rW = rW rs,
+              rElements = (path, []) : rElements rs'}
+  
+
+renderLine :: String -> [Int] -> StateT RenderState IO ()
+renderLine str path = do
+  surf <- textSurface (if str == "" then " " else str) fontSize fpathMono (clr 0xD0 0xE0 0xE0 0)
+  (V2 iw ih) <- surfaceDimensions surf
+  rs <- S.get
+  put $ rs { rY = rY rs + fromIntegral ih + paddingLine,
+             rElements = (path, [(rect (rX rs) (rY rs) iw ih, surf)]) : rElements rs }
 
 renderInline :: Int -> Inline -> [Int] -> StateT RenderState IO ()
-renderInline origX (IText txt) = renderInline' origX txt (clr 0xC0 0xC0 0xC0 0)
-renderInline origX (ILink txt _) = renderInline' origX txt (clr 0x80 0xC0 0xB0 0)
+renderInline origX (IText txt) = renderInline' fpath origX txt (clr 0xC0 0xC0 0xB0 0)
+renderInline origX (ILink txt _) = renderInline' fpath origX txt (clr 0x80 0xC0 0xB0 0)
+renderInline origX (ICode _ txt) = renderInline' fpathMono origX txt (clr 0xD0 0xE0 0xE0 0)
 
-renderInline' :: Int -> String -> Raw.Color -> [Int] -> StateT RenderState IO ()
-renderInline' origX txt c path = do
-  space <- textSurface " " fontSize fpath c
+renderInline' :: String -> Int -> String -> Raw.Color -> [Int] -> StateT RenderState IO ()
+renderInline' font origX txt c path = do
+  space <- textSurface " " fontSize font c
   sDim <- surfaceDimensions space
   freeSurface space
-  ws <- mapM (\w -> textSurface w fontSize fpath c) (words txt)
+  ws <- mapM (\w -> textSurface w fontSize font c) (words txt)
   dims <- mapM surfaceDimensions ws
   coordinates <- mapM (placeWord origX sDim) dims
   rs <- S.get
@@ -411,11 +432,12 @@ renderInline' origX txt c path = do
 placeWord :: Int -> V2 CInt -> V2 CInt -> StateT RenderState IO (Rectangle Int)
 placeWord origX sDim wDim = do
   rs <- S.get
-  let x = rX rs + vX sDim + vX wDim
+  let spaceWidth = fromIntegral (vX sDim) / 2
+      x = rX rs + floor spaceWidth + vX wDim
       (st, c) = if (x > rW rs)
-                then (rs { rX = origX + vX wDim, rY = rY rs + vY wDim },
-                      rect origX (rY rs + vY wDim) (vX wDim) (vY wDim))
-                else (rs { rX = x },
+                then (rs { rX = origX + vX wDim + floor spaceWidth, rY = rY rs + vY wDim + paddingLine},
+                      rect origX (rY rs + vY wDim + paddingLine) (vX wDim) (vY wDim))
+                else (rs { rX = x + floor spaceWidth },
                       rect (rX rs + vX sDim) (rY rs) (vX wDim) (vY wDim))
   put st
   pure c

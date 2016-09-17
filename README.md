@@ -13,31 +13,40 @@ the ability to just do its job without dealing with UI.
 ## Prototype
 
 In the `prototype` directory, there's one of the prototypes, which
-includes two programs: `feed`, which loads feeds and packs them into a
-structure, and `view`, which reads that structure, and renders it
-using SDL. The viewer is designed to resemble an
+includes three programs: `feed` and `doc`, which load feeds and
+documents (anything pandoc can read), and pack them into a structure,
+and `view`, which reads that structure, and renders it using SDL.
+
+The viewer is designed to resemble an
 [info](https://en.wikipedia.org/wiki/Info_%28Unix%29) reader, but with
-graphics, and aiming to be more interactive (i.e., rendering not
-static documents, but a basic and changing program UI, and passing
-some events to a program).
+graphics, and aiming to be more interactive in the future (more like
+info reader inside of emacs, and with dynamic input).
 
-Currently it depends, among other things, on a
-[hs-sdl2-image fork](https://github.com/defanor/hs-sdl2-image), and
-can be executed simply by piping `feed` output into `view` input:
+### Controls
 
-```
-feed http://xkcd.com/atom.xml https://feeds.feedburner.com/InvisibleBread | view | xargs -L 1 xdg-open
-```
-
-Controls similar to those of `info`: `[`/`]`, `p`/`n`, `u` for
+Controls are similar to those of `info`: `[`/`]`, `p`/`n`, `u` for
 structured navigation; space, `f`/`b`, and mouse scroll for positional
 navigation; mouse click on a link prints its target into stdout.
 
-A screenshot:
+### Examples
+
+#### Invocation
+
+```
+feed http://xkcd.com/atom.xml \
+     https://feeds.feedburner.com/InvisibleBread \
+     http://existentialcomics.com/rss.xml \
+     http://www.smbc-comics.com/rss.php \
+| view | xargs -L 1 xdg-open
+```
+
+#### Screenshots
 
 ![feeds in the viewer](http://paste.uberspace.net/feed-reader.png)
 
-The current document structure:
+![readme in the viewer](http://paste.uberspace.net/doc-reader.png)
+
+#### Document structure
 
 ```haskell
 data Inline = IText String
@@ -46,9 +55,10 @@ data Inline = IText String
 data Block = BParagraph [Inline]
            | BImage String
            | BSection String [Block]
+           | BCode (Maybe String) String
 ```
 
-It uses s-expressions for serialization, looks like this:
+#### Serialization
 
 ```
 (section "Entries"
