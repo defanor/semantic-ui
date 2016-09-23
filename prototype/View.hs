@@ -346,12 +346,14 @@ makeTexture renderer active y rw rh es = do
 
 renderDoc :: Renderer -> Int -> Int -> Int -> [Int] -> Bool -> Block -> Maybe RenderCache -> IO RenderCache
 renderDoc renderer y rw rh active True b rcache = do
-  case rcache of
+  elements <- case rcache of
     Just rc -> do
-      mapM_ (\(_, rs) -> mapM_ (\(_, s) -> freeSurface s) rs) $ rcElements rc
+      -- mapM_ (\(_, rs) -> mapM_ (\(_, s) -> freeSurface s) rs) $ rcElements rc
       destroyTexture $ rcTexture rc
-    Nothing -> pure ()
-  elements <- rElements . snd <$> runStateT (renderBlock b []) (RenderState [] 0 0 rw [])
+      rElements . snd <$> runStateT (renderBlock (rcElements rc) b []) (RenderState [] 0 0 rw [])
+    Nothing -> rElements . snd <$> runStateT (renderBlock [] b []) (RenderState [] 0 0 rw [])
+
+  -- elements <- rElements . snd <$> runStateT (renderBlock b []) (RenderState [] 0 0 rw [])
   t <- makeTexture renderer active y rw rh elements
   pure $ RenderCache (V2 0 0) t elements
 renderDoc renderer y rw rh active False b (Just rcache) = do
@@ -360,17 +362,23 @@ renderDoc renderer y rw rh active False b (Just rcache) = do
   pure $ rcache { rcTexture = t }
 renderDoc renderer y rw rh active redraw b rcache = undefined -- should not happen
 
+freeOldSurfaces :: MonadIO m => [Int] -> [Element] -> m ()
+freeOldSurfaces p e = case lookup p e of
+  Just surfaces -> mapM_ (freeSurface . snd) surfaces
+  Nothing -> pure ()
 
-renderBlock :: Block -> [Int] -> StateT RenderState IO ()
-renderBlock (BSection title blocks) path = do
-  titleSurf <- textSurface title (max fontSize (titleFontSize - length path)) fpath
-    $ clr 0xA0 0xD0 0xB0 0
+renderBlock :: [Element] -> Block -> [Int] -> StateT RenderState IO ()
+renderBlock old (BSection title blocks) path = do
+  titleSurf <- case lookup path old of
+    Just [(_, ts)] -> pure ts
+    Nothing -> textSurface title (max fontSize (titleFontSize - length path)) fpath
+      $ clr 0xA0 0xD0 0xB0 0
   titleSurfDim@(V2 tw th) <- surfaceDimensions titleSurf
   rs <- S.get
   put $ rs { rX = rX rs + sectionPaddingLeft,
              rY = rY rs + fromIntegral th + paddingBottom,
              rW = rW rs - sectionPaddingLeft }
-  zipWithM renderBlock blocks (map ((++) path . pure) [0..])
+  zipWithM (renderBlock old) blocks (map ((++) path . pure) [0..])
   rs' <- S.get
   put $ rs' { rX = rX rs,
               rW = rW rs,
@@ -382,23 +390,25 @@ renderBlock (BSection title blocks) path = do
                           (bottom (rElements rs') - rY rs),
                          titleSurf)])
                 : rElements rs'}
-renderBlock (BImage imgPath) path = do
-  s <- imgLoad imgPath
+renderBlock old (BImage imgPath) path = do
+  s <- case lookup path old of
+    Just [(_, surf)] -> pure surf
+    Nothing -> imgLoad imgPath
   (V2 iw ih) <- surfaceDimensions s
   rs <- S.get
   put $ rs { rY = rY rs + fromIntegral ih + paddingBottom,
              rElements = (path, [(rect (rX rs) (rY rs) iw ih, s)]) : rElements rs }
-renderBlock (BParagraph inlines) path = do
+renderBlock old (BParagraph inlines) path = do
   rs <- S.get
-  zipWithM (renderInline (rX rs)) inlines (map ((++) path . pure) [0..])
+  zipWithM (renderInline old (rX rs)) inlines (map ((++) path . pure) [0..])
   rs' <- S.get
   put $ rs' { rX = rX rs,
               rW = rW rs,
               rY = bottom (rElements rs') + paddingBottom,
               rElements = (path, []) : rElements rs'}
-renderBlock (BCode lang str) path = do
+renderBlock old (BCode lang str) path = do
   rs <- S.get
-  zipWithM renderLine (lines str) (map ((++) path . pure) [0..])
+  zipWithM (renderLine old) (lines str) (map ((++) path . pure) [0..])
   rs' <- S.get
   put $ rs' { rX = rX rs,
               rY = rY rs' + paddingBottom,
@@ -406,25 +416,29 @@ renderBlock (BCode lang str) path = do
               rElements = (path, []) : rElements rs'}
   
 
-renderLine :: String -> [Int] -> StateT RenderState IO ()
-renderLine str path = do
-  surf <- textSurface (if str == "" then " " else str) fontSize fpathMono (clr 0xD0 0xE0 0xE0 0)
+renderLine :: [Element] -> String -> [Int] -> StateT RenderState IO ()
+renderLine old str path = do
+  surf <- case lookup path old of
+    Just [(_, s)] -> pure s
+    Nothing -> textSurface (if str == "" then " " else str) fontSize fpathMono (clr 0xD0 0xE0 0xE0 0)
   (V2 iw ih) <- surfaceDimensions surf
   rs <- S.get
   put $ rs { rY = rY rs + fromIntegral ih + paddingLine,
              rElements = (path, [(rect (rX rs) (rY rs) iw ih, surf)]) : rElements rs }
 
-renderInline :: Int -> Inline -> [Int] -> StateT RenderState IO ()
-renderInline origX (IText txt) = renderInline' fpath origX txt (clr 0xC0 0xC0 0xB0 0)
-renderInline origX (ILink txt _) = renderInline' fpath origX txt (clr 0x80 0xC0 0xB0 0)
-renderInline origX (ICode _ txt) = renderInline' fpathMono origX txt (clr 0xD0 0xE0 0xE0 0)
+renderInline :: [Element] -> Int -> Inline -> [Int] -> StateT RenderState IO ()
+renderInline old origX (IText txt) = renderInline' old fpath origX txt (clr 0xC0 0xC0 0xB0 0)
+renderInline old origX (ILink txt _) = renderInline' old fpath origX txt (clr 0x80 0xC0 0xB0 0)
+renderInline old origX (ICode _ txt) = renderInline' old fpathMono origX txt (clr 0xD0 0xE0 0xE0 0)
 
-renderInline' :: String -> Int -> String -> Raw.Color -> [Int] -> StateT RenderState IO ()
-renderInline' font origX txt c path = do
+renderInline' :: [Element] -> String -> Int -> String -> Raw.Color -> [Int] -> StateT RenderState IO ()
+renderInline' old font origX txt c path = do
   space <- textSurface " " fontSize font c
   sDim <- surfaceDimensions space
   freeSurface space
-  ws <- mapM (\w -> textSurface w fontSize font c) (words txt)
+  ws <- case lookup path old of
+    Just es -> pure $ map snd es
+    Nothing -> mapM (\w -> textSurface w fontSize font c) (words txt)
   dims <- mapM surfaceDimensions ws
   coordinates <- mapM (placeWord origX sDim) dims
   rs <- S.get
