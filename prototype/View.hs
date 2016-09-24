@@ -25,7 +25,7 @@ import Foreign.C.Types
 import GHC.Exts
 import Control.Applicative
 import System.IO
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy.Char8 as BL
 
 
 import Types
@@ -206,6 +206,11 @@ tillSection f b p = do
   p' <- f b p
   (getSection b p' >> pure p') <|> tillSection f b p'
 
+-- | Repeat a navigation action until we reach a link
+tillLink :: Nav -> Nav
+tillLink f b p = do
+  p' <- f b p
+  (getLink b p' >> pure p') <|> tillLink f b p'
 
 handleLinkActions :: Block -> [Element] -> [Int] -> Int -> EventPayload -> IO ()
 handleLinkActions b es s y
@@ -216,6 +221,12 @@ handleLinkActions b es s y
       putStrLn target
       hFlush stdout
     _ -> pure ()
+handleLinkActions b es s y (KeyboardEvent (KeyboardEventData _ Pressed _ ks))
+  | unwrapKeycode (keysymKeycode ks) == 13 = case getElem b s of
+      Just (Left b) -> BL.putStrLn $ printBlock b
+      Just (Right i) -> BL.putStrLn $ printInline i
+      Nothing -> pure ()
+  | otherwise = pure ()
 handleLinkActions b es s y epl = pure ()
 
 
@@ -224,8 +235,7 @@ navigate :: Block -> [Element] -> [Int] -> Int -> Int -> EventPayload -> ([Int],
 navigate b es p y h (MouseWheelEvent (MouseWheelEventData _ _ (V2 _ i))) =
   (p, y + (div h 4) * fromIntegral i)
 navigate b es p y h epl = maybe (p, y) id $ do
-  ti <- textInput epl
-  navigateStruct ti <|> navigatePos ti
+  navigateStruct <|> (navigatePos =<< textInput epl)
   where
     navigatePos :: Text.Text -> Maybe ([Int], Int)
     navigatePos c = do
@@ -233,14 +243,40 @@ navigate b es p y h epl = maybe (p, y) id $ do
                        ("b", div h 4),
                        (" ", - h)]
       pure (p, y + y')
-    navigateStruct :: Text.Text -> Maybe ([Int], Int)
-    navigateStruct c = do
-      f <- lookup c [ ("n", sNextCycle), ("p", sPrevCycle)
+    navigateStruct :: Maybe ([Int], Int)
+    navigateStruct = do
+      p <- case epl of
+        (KeyboardEvent (KeyboardEventData _ Pressed _ ks)) -> do
+          -- todo: check modifiers
+          let ksm = keysymModifier ks
+          f <- lookup (unwrapKeycode (keysymKeycode ks),
+                       keyModifierLeftShift ksm || keyModifierRightShift ksm)
+               [((9, False), sNextInfo),
+                ((9, True), sPrevInfo)]
+          tillLink f b p
+        _ -> mempty
+        <|> do
+          ti <- textInput epl
+          f <- lookup ti [ ("n", sNextCycle), ("p", sPrevCycle)
                     , ("u", sUp), ("d", sDown)
                     , ("]", sNextInfo), ("[", sPrevInfo)]
-      p <- tillSection f b p
-      t <- top . map fst <$> lookup p es
-      pure (p, -t)
+          tillSection f b p
+      elemCoords <- map fst <$> lookup p es
+      let viewTop = -y
+          viewBottom = viewTop + h
+          viewHeight = viewBottom - viewTop
+          elemTop = top elemCoords
+          elemBottom = bottom elemCoords
+          elemHeight = elemBottom - elemTop
+          newTop = case (viewTop <= elemTop,
+                         viewBottom >= elemBottom,
+                         viewHeight > elemHeight) of
+            -- fits on the current screen
+            (True, True, _) -> viewTop
+            -- doesn't fit currently, but would feet in a screen
+            (_, _, True) -> elemTop - round (fromIntegral (viewHeight - elemHeight) * 0.8)
+            _ -> elemTop
+      pure (p, min 0 (-newTop))
 
 redrawNeeded :: EventPayload -> Bool
 redrawNeeded (WindowShownEvent _) = True
@@ -299,13 +335,17 @@ clr = Raw.Color
 
 
 
-bottom :: Integral a => [Element] -> a
-bottom = fromIntegral . foldl max 0 .
+eBottom :: Integral a => [Element] -> a
+eBottom = fromIntegral . foldl max 0 .
          concatMap (\(_, rs) -> map (\(r, _) -> rectY r + rectH r) rs)
 
 top :: Integral a => [Rectangle a] -> a
 top [] = 0
 top (r:rs) = fromIntegral . foldl min (rectY r) $ map rectY rs
+
+bottom :: Integral a => [Rectangle a] -> a
+bottom [] = 0
+bottom (r:rs) = fromIntegral . foldl min (rectY r + rectH r) $ map (\r -> rectY r + rectH r) rs
 
 
 
@@ -328,9 +368,13 @@ makeTexture renderer active y rw rh es = do
                    Just (r1, r2) -> do
                      when (active == p) $ do
                        surfaceFillRect bgSurf
-                         (Just $ fmap fromIntegral r1) (V4 0xA0 0xD0 0xB0 0xFF)
+                         (Just $ rect (rectX r1) (rectY r1 - 1) (rectW r1) 1)
+                         (V4 0xA0 0xD0 0xB0 0xFF)
                        surfaceFillRect bgSurf
-                         (Just $ rect (rectX r1 + 1) (rectY r1 + 1) (rectW r1 - 2) (rectH r1 - 2))
+                         (Just $ rect (rectX r1) (rectY r1 + rectH r1) (rectW r1) 1)
+                         (V4 0xA0 0xB0 0xD0 0xFF)
+                       surfaceFillRect bgSurf
+                         (Just $ fmap fromIntegral r1)
                          (V4 0x06 0x10 0x14 0)
                      surfaceBlit s
                        (Just $ fmap fromIntegral r2)
@@ -387,7 +431,7 @@ renderBlock old (BSection title blocks) path = do
                           (rX rs)
                           (rY rs)
                           (rW rs)
-                          (bottom (rElements rs') - rY rs),
+                          (eBottom (rElements rs') - rY rs),
                          titleSurf)])
                 : rElements rs'}
 renderBlock old (BImage imgPath) path = do
@@ -404,7 +448,7 @@ renderBlock old (BParagraph inlines) path = do
   rs' <- S.get
   put $ rs' { rX = rX rs,
               rW = rW rs,
-              rY = bottom (rElements rs') + paddingBottom,
+              rY = eBottom (rElements rs') + paddingBottom,
               rElements = (path, []) : rElements rs'}
 renderBlock old (BCode lang str) path = do
   rs <- S.get

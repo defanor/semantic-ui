@@ -44,6 +44,8 @@ instance FromLisp Block where
   parseLisp (List (Symbol "section" : title : bs)) = BSection <$> parseLisp title <*> mapM parseLisp bs
   parseLisp other = fail $ "Failed to parse: " ++ show other
 
+printInline :: Inline -> BL.ByteString
+printInline = encode
 
 printBlock :: Block -> BL.ByteString
 printBlock = encode
