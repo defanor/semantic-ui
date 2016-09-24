@@ -217,14 +217,14 @@ handleLinkActions b es s y
   (MouseButtonEvent
     (MouseButtonEventData _ Pressed _ ButtonLeft 1 (P (V2 cx cy)))) = do
   case catMaybes $ map (getLink b) $ atPoint (P (V2 cx (cy - fromIntegral y))) es of
-    [ILink txt target] -> do
-      putStrLn target
+    [l@(ILink txt target)] -> do
+      BL.putStrLn (printInline l)
       hFlush stdout
     _ -> pure ()
 handleLinkActions b es s y (KeyboardEvent (KeyboardEventData _ Pressed _ ks))
   | unwrapKeycode (keysymKeycode ks) == 13 = case getElem b s of
-      Just (Left b) -> BL.putStrLn $ printBlock b
-      Just (Right i) -> BL.putStrLn $ printInline i
+      Just (Left b) -> BL.putStrLn (printBlock b) >> hFlush stdout
+      Just (Right i) -> BL.putStrLn (printInline i) >> hFlush stdout
       Nothing -> pure ()
   | otherwise = pure ()
 handleLinkActions b es s y epl = pure ()

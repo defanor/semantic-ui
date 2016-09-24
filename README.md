@@ -37,7 +37,10 @@ feed http://xkcd.com/atom.xml \
      https://feeds.feedburner.com/InvisibleBread \
      http://existentialcomics.com/rss.xml \
      http://www.smbc-comics.com/rss.php \
-| view | xargs -L 1 xdg-open
+| view \
+| guile -c "(do ((e '(dummy) (read))) ((eof-object? e))
+(when (eq? (car e) 'link) (display (caddr e)) (newline) (flush-all-ports)))" \
+| xargs -L 1 xdg-open
 ```
 
 #### Screenshots
