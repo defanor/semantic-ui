@@ -26,7 +26,7 @@ import GHC.Exts
 import Control.Applicative
 import System.IO
 import qualified Data.ByteString.Lazy.Char8 as BL
-
+import qualified Codec.Binary.UTF8.String as UTF8
 
 import Types
 
@@ -327,7 +327,8 @@ vY (V2 _ y) = fromIntegral y
 textSurface :: MonadIO m => String -> Int -> String -> Raw.Color -> m Surface
 textSurface str size font c = do
   font <- openFont font size
-  surf <- renderUTF8Shaded font str c (clr 0x06 0x10 0x14 0)
+  let str' = if UTF8.isUTF8Encoded str then UTF8.decodeString str else str
+  surf <- renderUTF8Shaded font str' c (clr 0x06 0x10 0x14 0)
   closeFont font
   pure surf
 
