@@ -17,10 +17,13 @@ includes three programs: `feed` and `doc`, which load feeds and
 documents (anything pandoc can read), and pack them into a structure,
 and `view`, which reads that structure, and renders it using SDL.
 
-The viewer is designed to resemble an
-[info](https://en.wikipedia.org/wiki/Info_%28Unix%29) reader, but with
-graphics, and aiming to be more interactive in the future (more like
-info reader inside of emacs, and with dynamic input).
+The viewer is designed to resemble
+an [info](https://en.wikipedia.org/wiki/Info_%28Unix%29) reader, but
+with graphics, and aiming to be more interactive in the future (more
+like info reader inside of emacs, and with dynamic input). Or just
+a [pager](https://en.wikipedia.org/wiki/Terminal_pager), but
+graphical.
+
 
 ### Controls
 
@@ -87,8 +90,3 @@ data Block = BParagraph [Inline]
                   (paragraph "The New Worlds Mission is already trying to get funding for this, but NASA sponsored their proposal, so it will be hard to catch the telescope people by surprise with it.")
                   (paragraph "URI: " (link "http://xkcd.com/1730/" "http://xkcd.com/1730/"))))
 ```
-
-### Dependencies
-
-Currently it depends, among other things, on a
-[hs-sdl2-image fork](https://github.com/defanor/hs-sdl2-image).

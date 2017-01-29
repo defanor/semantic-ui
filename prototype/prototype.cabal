@@ -21,7 +21,7 @@ executable view
   -- other-extensions:
   build-depends:       atto-lisp
                      , attoparsec >= 0.13.0.1
-                     , base >=4.8 && <4.9
+                     , base >=4.8 && <5
                      , bytestring >= 0.10.6.0
                      , linear
                      , mtl >= 2.2.1
@@ -44,7 +44,7 @@ executable feed
   build-depends:       async >= 2.0.2
                      , atto-lisp
                      , attoparsec >= 0.13.0.1
-                     , base >=4.8 && <4.9
+                     , base >=4.8 && <5
                      , bytestring >= 0.10.6.0
                      , directory >= 1.2.3
                      , feed >= 0.3 && < 0.4
@@ -65,7 +65,7 @@ executable doc
   -- other-extensions:
   build-depends:       atto-lisp
                      , attoparsec >= 0.13.0.1
-                     , base >=4.8 && <4.9
+                     , base >=4.8 && <5
                      , bytestring >= 0.10.6.0
                      , data-default >= 0.7.1.1
                      , directory >= 1.2.3

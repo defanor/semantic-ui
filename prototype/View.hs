@@ -12,7 +12,7 @@ import Data.List as L
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Char
-import SDL.Image
+import qualified SDL.Image as Image
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TIO
 import Data.Traversable
@@ -438,7 +438,7 @@ renderBlock old (BSection title blocks) path = do
 renderBlock old (BImage imgPath) path = do
   s <- case lookup path old of
     Just [(_, surf)] -> pure surf
-    Nothing -> imgLoad imgPath
+    Nothing -> Image.load imgPath
   (V2 iw ih) <- surfaceDimensions s
   rs <- S.get
   put $ rs { rY = rY rs + fromIntegral ih + paddingBottom,
